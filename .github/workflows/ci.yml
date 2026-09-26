@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Build verification only -- no deploy target has been decided for the client yet (App
+# Store/Play Store review flow, or a web hosting target), so this just keeps main from ever
+# breaking analysis/tests, same spirit as the backend's cdk deploy but without a "deploy" step.
+jobs:
+  analyze-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
