@@ -54,6 +54,35 @@ class _CreateTournamentScreenState extends State<CreateTournamentScreen> {
   String? _lastCreatedName;
   String? _errorMessage;
 
+  @override
+  void initState() {
+    super.initState();
+    _upsertPlayerProfile();
+  }
+
+  static const _upsertPlayerProfileMutation = '''
+    mutation UpsertPlayerProfile {
+      upsertPlayerProfile {
+        id
+        createdAt
+        updatedAt
+      }
+    }
+  ''';
+
+  // Fire-and-forget identity sync, not a user-facing action -- seeds/touches this caller's
+  // Player row on every sign-in (see docs/blueprint.md: auto-called once on first sign-in,
+  // idempotent so re-firing on later sign-ins is harmless). No displayName/avatarUrl seeding
+  // yet -- see the players Lambda plan for why that's deliberately deferred.
+  Future<void> _upsertPlayerProfile() async {
+    try {
+      final request = GraphQLRequest<String>(document: _upsertPlayerProfileMutation);
+      await Amplify.API.mutate(request: request).response;
+    } on Exception catch (e) {
+      safePrint('upsertPlayerProfile error: $e');
+    }
+  }
+
   static const _createTournamentMutation = '''
     mutation CreateTournament(\$name: String!) {
       createTournament(name: \$name) {

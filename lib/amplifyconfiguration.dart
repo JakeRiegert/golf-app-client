@@ -20,6 +20,14 @@ const amplifyconfig = '''{
       "require_numbers": true,
       "require_symbols": false,
       "require_uppercase": false
+    },
+    "oauth": {
+      "identity_providers": ["GOOGLE"],
+      "redirect_sign_in_uri": ["http://localhost:5000/"],
+      "redirect_sign_out_uri": ["http://localhost:5000/"],
+      "response_type": "code",
+      "scopes": ["openid", "email", "profile"],
+      "domain": "golf-live-scoring-jr.auth.us-east-1.amazoncognito.com"
     }
   },
   "data": {
