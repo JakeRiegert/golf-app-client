@@ -296,16 +296,23 @@ class _TournamentTile extends StatelessWidget {
                       'You: $role\n'
                       '${data['visibility']} - ${data['status']}'
                       ' - ${started ? 'started' : 'not started'}'
-                      '${dates.isEmpty ? '' : ' - $dates'}\n'
+                      '${dates.isEmpty ? '' : ' - $dates'}'
+                      '${data['wagerPotAmount'] is num ? ' - pot \$${data['wagerPotAmount']}' : ''}\n'
                       'Invite code: $code',
                     );
                   },
                 ),
                 isThreeLine: true,
-                trailing: isAdmin && !started
-                    ? _StartButton(tournamentId: tournamentId)
-                    : null,
               ),
+              if (isAdmin)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                  child: _AdminActions(
+                    tournamentId: tournamentId,
+                    data: data,
+                    started: started,
+                  ),
+                ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                 child: TeamsSection(
@@ -320,6 +327,8 @@ class _TournamentTile extends StatelessWidget {
                   uid: uid,
                   canEdit: isAdmin,
                   started: started,
+                  organizerId: data['organizerId'] as String?,
+                  coAdminId: data['coAdminId'] as String?,
                 ),
               ),
             ],
@@ -330,51 +339,38 @@ class _TournamentTile extends StatelessWidget {
   }
 }
 
-// Admin-only "Start tournament": after this, players can no longer change their own handicap
-// (admins still can). Asks first, since players are locked out the moment it happens.
-class _StartButton extends StatefulWidget {
-  const _StartButton({required this.tournamentId});
+// Admin-only actions on a tournament card: Edit (updateTournament), Start (startTournament) and
+// Reopen (updateTournament with started: false). Start and Reopen ask first, since they change
+// whether players can edit their own handicap.
+class _AdminActions extends StatefulWidget {
+  const _AdminActions({
+    required this.tournamentId,
+    required this.data,
+    required this.started,
+  });
 
   final String tournamentId;
+  final Map<String, dynamic> data;
+  final bool started;
 
   @override
-  State<_StartButton> createState() => _StartButtonState();
+  State<_AdminActions> createState() => _AdminActionsState();
 }
 
-class _StartButtonState extends State<_StartButton> {
+class _AdminActionsState extends State<_AdminActions> {
   bool _busy = false;
   String? _error;
 
-  Future<void> _start() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Start the tournament?'),
-        content: const Text(
-          'Players will no longer be able to change their own handicap. '
-          'You and any co-admin still can.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Start'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
+  FirebaseFunctions get _functions =>
+      FirebaseFunctions.instanceFor(region: 'us-central1');
+
+  Future<void> _run(Future<void> Function() action) async {
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
-      await FirebaseFunctions.instanceFor(region: 'us-central1')
-          .httpsCallable('startTournament')
-          .call({'tournamentId': widget.tournamentId});
+      await action();
     } on FirebaseFunctionsException catch (e) {
       if (mounted) setState(() => _error = '${e.code}: ${e.message}');
     } finally {
@@ -382,14 +378,208 @@ class _StartButtonState extends State<_StartButton> {
     }
   }
 
+  Future<bool> _confirm(String title, String body, String action) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: Text(body),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(action),
+          ),
+        ],
+      ),
+    );
+    return result == true;
+  }
+
+  Future<void> _start() async {
+    final ok = await _confirm(
+      'Start the tournament?',
+      'Players will no longer be able to change their own handicap. '
+          'You and any co-admin still can.',
+      'Start',
+    );
+    if (!ok) return;
+    await _run(() async {
+      await _functions.httpsCallable('startTournament').call({
+        'tournamentId': widget.tournamentId,
+      });
+    });
+  }
+
+  Future<void> _reopen() async {
+    final ok = await _confirm(
+      'Reopen the tournament?',
+      'Players will be able to change their own handicap again until you '
+          'start it.',
+      'Reopen',
+    );
+    if (!ok) return;
+    await _run(() async {
+      await _functions.httpsCallable('updateTournament').call({
+        'tournamentId': widget.tournamentId,
+        'started': false,
+      });
+    });
+  }
+
+  Future<void> _edit() async {
+    final changes = await showDialog<Map<String, Object?>>(
+      context: context,
+      builder: (context) => _EditDialog(data: widget.data),
+    );
+    if (changes == null) return;
+    await _run(() async {
+      await _functions.httpsCallable('updateTournament').call({
+        'tournamentId': widget.tournamentId,
+        ...changes,
+      });
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Tooltip(
-      message: _error ?? 'Start the tournament',
-      child: FilledButton(
-        onPressed: _busy ? null : _start,
-        child: const Text('Start'),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 4,
+          children: [
+            OutlinedButton(
+              onPressed: _busy ? null : _edit,
+              child: const Text('Edit'),
+            ),
+            widget.started
+                ? OutlinedButton(
+                    onPressed: _busy ? null : _reopen,
+                    child: const Text('Reopen'),
+                  )
+                : FilledButton(
+                    onPressed: _busy ? null : _start,
+                    child: const Text('Start'),
+                  ),
+          ],
+        ),
+        if (_error != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              _error!,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+// Owns its text controllers so they are disposed only after the dialog has animated out.
+class _EditDialog extends StatefulWidget {
+  const _EditDialog({required this.data});
+
+  final Map<String, dynamic> data;
+
+  @override
+  State<_EditDialog> createState() => _EditDialogState();
+}
+
+class _EditDialogState extends State<_EditDialog> {
+  late final _name = TextEditingController(text: '${widget.data['name']}');
+  late final _start = TextEditingController(
+    text: (widget.data['startDate'] as String?) ?? '',
+  );
+  late final _end = TextEditingController(
+    text: (widget.data['endDate'] as String?) ?? '',
+  );
+  late final _pot = TextEditingController(
+    text: widget.data['wagerPotAmount'] is num
+        ? '${widget.data['wagerPotAmount']}'
+        : '',
+  );
+  late bool _public = widget.data['visibility'] == 'public';
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _start.dispose();
+    _end.dispose();
+    _pot.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    String? orNull(TextEditingController c) =>
+        c.text.trim().isEmpty ? null : c.text.trim();
+    final pot = orNull(_pot);
+    Navigator.pop(context, <String, Object?>{
+      'name': _name.text,
+      'startDate': orNull(_start),
+      'endDate': orNull(_end),
+      'wagerPotAmount': pot == null ? null : num.tryParse(pot),
+      'visibility': _public ? 'public' : 'private',
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Edit tournament'),
+      content: SizedBox(
+        width: 360,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _name,
+                decoration: const InputDecoration(labelText: 'Name'),
+              ),
+              TextField(
+                controller: _start,
+                decoration: const InputDecoration(
+                  labelText: 'Start date (YYYY-MM-DD)',
+                ),
+              ),
+              TextField(
+                controller: _end,
+                decoration: const InputDecoration(
+                  labelText: 'End date (YYYY-MM-DD)',
+                ),
+              ),
+              TextField(
+                controller: _pot,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                decoration: const InputDecoration(
+                  labelText: 'Team wager pot (optional)',
+                ),
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Public (anyone signed in can watch)'),
+                value: _public,
+                onChanged: (v) => setState(() => _public = v),
+              ),
+            ],
+          ),
+        ),
       ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(onPressed: _save, child: const Text('Save')),
+      ],
     );
   }
 }

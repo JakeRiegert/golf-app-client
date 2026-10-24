@@ -16,11 +16,15 @@ class PlayersSection extends StatefulWidget {
     required this.uid,
     required this.canEdit,
     required this.started,
+    required this.organizerId,
+    required this.coAdminId,
   });
 
   final String tournamentId;
   final String uid;
   final bool canEdit;
+  final String? organizerId;
+  final String? coAdminId;
 
   // Once an admin has started the tournament, players can no longer change their own handicap.
   final bool started;
@@ -63,6 +67,14 @@ class _PlayersSectionState extends State<PlayersSection> {
           ...change,
         });
       });
+
+  // Admins only: name (or, with null, remove) the co-admin who shares the organizer's powers.
+  Future<void> _setCoAdmin(String? playerId) => _run(() async {
+    await _functions.httpsCallable('assignCoAdmin').call({
+      'tournamentId': widget.tournamentId,
+      'playerId': playerId,
+    });
+  });
 
   Future<void> _setOwnHandicap(num? handicap) => _run(() async {
     await _functions.httpsCallable('setMyHandicap').call({
@@ -117,6 +129,9 @@ class _PlayersSectionState extends State<PlayersSection> {
                         isMe: doc.id == widget.uid,
                         canEdit: widget.canEdit,
                         started: widget.started,
+                        isOrganizer: doc.id == widget.organizerId,
+                        isCoAdmin: doc.id == widget.coAdminId,
+                        onCoAdmin: (make) => _setCoAdmin(make ? doc.id : null),
                         busy: _busy,
                         onAdminTeam: (teamId) =>
                             _assign(doc.id, {'teamId': teamId}),
@@ -149,6 +164,9 @@ class _PlayerRow extends StatefulWidget {
     required this.isMe,
     required this.canEdit,
     required this.started,
+    required this.isOrganizer,
+    required this.isCoAdmin,
+    required this.onCoAdmin,
     required this.busy,
     required this.onAdminTeam,
     required this.onAdminHandicap,
@@ -162,6 +180,9 @@ class _PlayerRow extends StatefulWidget {
   final bool isMe;
   final bool canEdit;
   final bool started;
+  final bool isOrganizer;
+  final bool isCoAdmin;
+  final void Function(bool make) onCoAdmin;
   final bool busy;
   final void Function(String? teamId) onAdminTeam;
   final void Function(num? handicap) onAdminHandicap;
@@ -230,9 +251,28 @@ class _PlayerRowState extends State<_PlayerRow> {
             builder: (context, snapshot) {
               final name = snapshot.data?.data()?['displayName'] as String?;
               final label = name ?? 'Player ${widget.playerId.substring(0, 6)}';
-              return Text(
-                widget.isMe ? '$label (you)' : label,
-                style: theme.textTheme.bodyMedium,
+              final role = widget.isOrganizer
+                  ? ' - organizer'
+                  : (widget.isCoAdmin ? ' - co-admin' : '');
+              return Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '${widget.isMe ? '$label (you)' : label}$role',
+                      style: theme.textTheme.bodyMedium,
+                    ),
+                  ),
+                  // Admins can name or remove the co-admin; the organizer is already an admin.
+                  if (widget.canEdit && !widget.isOrganizer)
+                    TextButton(
+                      onPressed: widget.busy
+                          ? null
+                          : () => widget.onCoAdmin(!widget.isCoAdmin),
+                      child: Text(
+                        widget.isCoAdmin ? 'Remove co-admin' : 'Make co-admin',
+                      ),
+                    ),
+                ],
               );
             },
           ),
