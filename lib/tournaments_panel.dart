@@ -31,12 +31,45 @@ class _TournamentsPanelState extends State<TournamentsPanel> {
       .collection('tournaments')
       .where('organizerId', isEqualTo: widget.uid);
 
+  final _code = TextEditingController();
+  bool _joining = false;
+  String? _joinStatus;
+  String? _joinError;
+
+  HttpsCallable get _join =>
+      FirebaseFunctions.instanceFor(region: 'us-central1').httpsCallable('joinTournament');
+
   @override
   void dispose() {
     _name.dispose();
     _start.dispose();
     _end.dispose();
+    _code.dispose();
     super.dispose();
+  }
+
+  Future<void> _joinTournament() async {
+    setState(() {
+      _joining = true;
+      _joinStatus = null;
+      _joinError = null;
+    });
+    try {
+      final result = await _join.call({'inviteCode': _code.text});
+      final data = Map<String, dynamic>.from(result.data as Map);
+      if (mounted) {
+        setState(() {
+          _joinStatus = data['alreadyMember'] == true
+              ? 'You are already in "${data['name']}".'
+              : 'Joined "${data['name']}".';
+          _code.clear();
+        });
+      }
+    } on FirebaseFunctionsException catch (e) {
+      if (mounted) setState(() => _joinError = '${e.code}: ${e.message}');
+    } finally {
+      if (mounted) setState(() => _joining = false);
+    }
   }
 
   Future<void> _createTournament() async {
@@ -120,6 +153,30 @@ class _TournamentsPanelState extends State<TournamentsPanel> {
         if (_error != null) ...[
           const SizedBox(height: 12),
           Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
+        ],
+        const SizedBox(height: 24),
+        Text('Join a tournament', style: theme.textTheme.headlineSmall),
+        const SizedBox(height: 4),
+        Text('Goes through the joinTournament function.', style: theme.textTheme.bodySmall),
+        const SizedBox(height: 16),
+        TextField(
+          controller: _code,
+          textCapitalization: TextCapitalization.characters,
+          decoration: const InputDecoration(labelText: 'Invite code', border: OutlineInputBorder()),
+          onSubmitted: (_) => _joining ? null : _joinTournament(),
+        ),
+        const SizedBox(height: 12),
+        FilledButton(
+          onPressed: _joining ? null : _joinTournament,
+          child: const Text('Join tournament'),
+        ),
+        if (_joinStatus != null) ...[
+          const SizedBox(height: 12),
+          Text(_joinStatus!, style: const TextStyle(color: Colors.green)),
+        ],
+        if (_joinError != null) ...[
+          const SizedBox(height: 12),
+          Text(_joinError!, style: TextStyle(color: theme.colorScheme.error)),
         ],
         const SizedBox(height: 24),
         Text('Your tournaments', style: theme.textTheme.headlineSmall),
