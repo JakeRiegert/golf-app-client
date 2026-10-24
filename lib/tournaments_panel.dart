@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 
+import 'players_section.dart';
 import 'teams_section.dart';
 
 // Debug-harness slice for tournaments: a form that calls createTournament, and a live list of
@@ -304,6 +305,14 @@ class _TournamentTile extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                 child: TeamsSection(
                   tournamentId: tournamentId,
+                  canEdit: isAdmin,
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: PlayersSection(
+                  tournamentId: tournamentId,
+                  uid: uid,
                   canEdit: isAdmin,
                 ),
               ),
