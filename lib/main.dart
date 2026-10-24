@@ -1,13 +1,26 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
 import 'firebase_options.dart';
+import 'home_screen.dart';
 import 'sign_in_screen.dart';
+
+// Run with --dart-define=USE_EMULATORS=true to talk to the local Firebase emulators (Auth,
+// Firestore, Functions) instead of the real project. Off by default, so a normal build can
+// never be pointed at localhost by accident.
+const bool useEmulators = bool.fromEnvironment('USE_EMULATORS');
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  if (useEmulators) {
+    await FirebaseAuth.instance.useAuthEmulator('localhost', 9099);
+    FirebaseFirestore.instance.useFirestoreEmulator('localhost', 8080);
+    FirebaseFunctions.instanceFor(region: 'us-central1').useFunctionsEmulator('localhost', 5001);
+  }
   runApp(const GolfApp());
 }
 
@@ -19,6 +32,15 @@ class GolfApp extends StatelessWidget {
     return MaterialApp(
       title: 'Golf Live Scoring',
       theme: ThemeData(colorSchemeSeed: Colors.green, useMaterial3: true),
+      // Inside the app (not around it) so the banner has a Directionality ancestor.
+      builder: (context, child) => useEmulators
+          ? Banner(
+              message: 'LOCAL EMULATOR',
+              location: BannerLocation.bottomStart,
+              color: Colors.deepOrange,
+              child: child!,
+            )
+          : child!,
       home: const AuthGate(),
     );
   }
@@ -38,41 +60,6 @@ class AuthGate extends StatelessWidget {
         final user = snapshot.data;
         return user == null ? const SignInScreen() : HomeScreen(user: user);
       },
-    );
-  }
-}
-
-// Placeholder signed-in screen for the auth milestone. Becomes the debug harness (a field and
-// button per callable function) once the Cloud Functions exist.
-class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key, required this.user});
-
-  final User user;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Golf Live Scoring'),
-        actions: [
-          TextButton(
-            onPressed: () => FirebaseAuth.instance.signOut(),
-            child: const Text('Sign out'),
-          ),
-        ],
-      ),
-      body: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text('Signed in', style: Theme.of(context).textTheme.headlineSmall),
-            const SizedBox(height: 12),
-            Text(user.displayName ?? '(no display name)'),
-            Text(user.email ?? '(no email)'),
-            Text('uid: ${user.uid}', style: Theme.of(context).textTheme.bodySmall),
-          ],
-        ),
-      ),
     );
   }
 }
