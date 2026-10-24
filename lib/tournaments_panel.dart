@@ -2,6 +2,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 
+import 'teams_section.dart';
+
 // Debug-harness slice for tournaments: a form that calls createTournament, and a live list of
 // the tournaments this user organizes. Reads are Firestore listeners; the only write path is the
 // createTournament Cloud Function. The invite code lives in tournaments/{id}/private/settings
@@ -211,20 +213,29 @@ class _TournamentTile extends StatelessWidget {
     final data = doc.data();
     final dates = [data['startDate'], data['endDate']].whereType<String>().join(' to ');
     return Card(
-      child: ListTile(
-        title: Text('${data['name']}'),
-        subtitle: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-          stream: doc.reference.collection('private').doc('settings').snapshots(),
-          builder: (context, snapshot) {
-            final code = snapshot.data?.data()?['inviteCode'] ?? '-';
-            return Text(
-              '${data['visibility']} - ${data['status']}'
-              '${dates.isEmpty ? '' : ' - $dates'}\n'
-              'Invite code: $code',
-            );
-          },
-        ),
-        isThreeLine: true,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          ListTile(
+            title: Text('${data['name']}'),
+            subtitle: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+              stream: doc.reference.collection('private').doc('settings').snapshots(),
+              builder: (context, snapshot) {
+                final code = snapshot.data?.data()?['inviteCode'] ?? '-';
+                return Text(
+                  '${data['visibility']} - ${data['status']}'
+                  '${dates.isEmpty ? '' : ' - $dates'}\n'
+                  'Invite code: $code',
+                );
+              },
+            ),
+            isThreeLine: true,
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: TeamsSection(tournamentId: doc.id),
+          ),
+        ],
       ),
     );
   }
