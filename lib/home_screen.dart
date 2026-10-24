@@ -3,6 +3,8 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'tournaments_panel.dart';
+
 // Signed-in home. For now this is the first slice of the debug harness: it calls the
 // upsertPlayerProfile Cloud Function once on arrival (creating or touching this user's profile),
 // shows the profile live from Firestore, and lets you edit the display name through the same
@@ -160,6 +162,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   const SizedBox(height: 12),
                   Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
                 ],
+                const Divider(height: 48),
+                TournamentsPanel(uid: widget.user.uid),
                 const SizedBox(height: 24),
                 Text('uid: ${widget.user.uid}', style: Theme.of(context).textTheme.bodySmall),
               ],
