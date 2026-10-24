@@ -278,6 +278,7 @@ class _TournamentTile extends StatelessWidget {
           data['startDate'],
           data['endDate'],
         ].whereType<String>().join(' to ');
+        final started = data['startedAt'] != null;
         return Card(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -294,12 +295,16 @@ class _TournamentTile extends StatelessWidget {
                     return Text(
                       'You: $role\n'
                       '${data['visibility']} - ${data['status']}'
+                      ' - ${started ? 'started' : 'not started'}'
                       '${dates.isEmpty ? '' : ' - $dates'}\n'
                       'Invite code: $code',
                     );
                   },
                 ),
                 isThreeLine: true,
+                trailing: isAdmin && !started
+                    ? _StartButton(tournamentId: tournamentId)
+                    : null,
               ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
@@ -314,12 +319,77 @@ class _TournamentTile extends StatelessWidget {
                   tournamentId: tournamentId,
                   uid: uid,
                   canEdit: isAdmin,
+                  started: started,
                 ),
               ),
             ],
           ),
         );
       },
+    );
+  }
+}
+
+// Admin-only "Start tournament": after this, players can no longer change their own handicap
+// (admins still can). Asks first, since players are locked out the moment it happens.
+class _StartButton extends StatefulWidget {
+  const _StartButton({required this.tournamentId});
+
+  final String tournamentId;
+
+  @override
+  State<_StartButton> createState() => _StartButtonState();
+}
+
+class _StartButtonState extends State<_StartButton> {
+  bool _busy = false;
+  String? _error;
+
+  Future<void> _start() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Start the tournament?'),
+        content: const Text(
+          'Players will no longer be able to change their own handicap. '
+          'You and any co-admin still can.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Start'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await FirebaseFunctions.instanceFor(region: 'us-central1')
+          .httpsCallable('startTournament')
+          .call({'tournamentId': widget.tournamentId});
+    } on FirebaseFunctionsException catch (e) {
+      if (mounted) setState(() => _error = '${e.code}: ${e.message}');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: _error ?? 'Start the tournament',
+      child: FilledButton(
+        onPressed: _busy ? null : _start,
+        child: const Text('Start'),
+      ),
     );
   }
 }

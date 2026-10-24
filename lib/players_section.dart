@@ -15,11 +15,15 @@ class PlayersSection extends StatefulWidget {
     required this.tournamentId,
     required this.uid,
     required this.canEdit,
+    required this.started,
   });
 
   final String tournamentId;
   final String uid;
   final bool canEdit;
+
+  // Once an admin has started the tournament, players can no longer change their own handicap.
+  final bool started;
 
   @override
   State<PlayersSection> createState() => _PlayersSectionState();
@@ -59,6 +63,13 @@ class _PlayersSectionState extends State<PlayersSection> {
           ...change,
         });
       });
+
+  Future<void> _setOwnHandicap(num? handicap) => _run(() async {
+    await _functions.httpsCallable('setMyHandicap').call({
+      'tournamentId': widget.tournamentId,
+      'handicap': handicap,
+    });
+  });
 
   Future<void> _chooseOwnTeam(String? teamId) => _run(() async {
     await _functions.httpsCallable('chooseTeam').call({
@@ -105,12 +116,14 @@ class _PlayersSectionState extends State<PlayersSection> {
                         teams: teams,
                         isMe: doc.id == widget.uid,
                         canEdit: widget.canEdit,
+                        started: widget.started,
                         busy: _busy,
                         onAdminTeam: (teamId) =>
                             _assign(doc.id, {'teamId': teamId}),
                         onAdminHandicap: (handicap) =>
                             _assign(doc.id, {'handicap': handicap}),
                         onOwnTeam: _chooseOwnTeam,
+                        onOwnHandicap: _setOwnHandicap,
                       ),
                   ],
                 );
@@ -135,10 +148,12 @@ class _PlayerRow extends StatefulWidget {
     required this.teams,
     required this.isMe,
     required this.canEdit,
+    required this.started,
     required this.busy,
     required this.onAdminTeam,
     required this.onAdminHandicap,
     required this.onOwnTeam,
+    required this.onOwnHandicap,
   });
 
   final String playerId;
@@ -146,10 +161,12 @@ class _PlayerRow extends StatefulWidget {
   final Map<String, String> teams;
   final bool isMe;
   final bool canEdit;
+  final bool started;
   final bool busy;
   final void Function(String? teamId) onAdminTeam;
   final void Function(num? handicap) onAdminHandicap;
   final void Function(String? teamId) onOwnTeam;
+  final void Function(num? handicap) onOwnHandicap;
 
   @override
   State<_PlayerRow> createState() => _PlayerRowState();
@@ -178,7 +195,12 @@ class _PlayerRowState extends State<_PlayerRow> {
 
   void _saveHandicap() {
     final text = _handicap.text.trim();
-    widget.onAdminHandicap(text.isEmpty ? null : num.tryParse(text));
+    final value = text.isEmpty ? null : num.tryParse(text);
+    if (widget.canEdit) {
+      widget.onAdminHandicap(value);
+    } else {
+      widget.onOwnHandicap(value);
+    }
   }
 
   @override
@@ -192,6 +214,9 @@ class _PlayerRowState extends State<_PlayerRow> {
     final selected = widget.teams.containsKey(teamId) ? teamId : null;
 
     final handicap = widget.data['handicap'];
+    // Admins can always change a handicap; a player only their own, and only before the start.
+    final canEditHandicap = widget.canEdit || (widget.isMe && !widget.started);
+    final handicapSetBy = widget.data['handicapSetBy'] as String?;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Column(
@@ -246,7 +271,7 @@ class _PlayerRowState extends State<_PlayerRow> {
               const SizedBox(width: 8),
               Expanded(
                 flex: 2,
-                child: widget.canEdit
+                child: canEditHandicap
                     ? TextField(
                         controller: _handicap,
                         keyboardType: const TextInputType.numberWithOptions(
@@ -266,7 +291,10 @@ class _PlayerRowState extends State<_PlayerRow> {
                         onSubmitted: (_) =>
                             widget.busy ? null : _saveHandicap(),
                       )
-                    : Text('HCP ${handicap is num ? handicap : '-'}'),
+                    : Text(
+                        'HCP ${handicap is num ? handicap : '-'}'
+                        '${widget.isMe && widget.started ? ' (locked)' : ''}',
+                      ),
               ),
             ],
           ),
@@ -277,6 +305,16 @@ class _PlayerRowState extends State<_PlayerRow> {
                 lockedByAdmin
                     ? 'Team set by the organizer'
                     : 'Team chosen by the player',
+                style: theme.textTheme.bodySmall,
+              ),
+            ),
+          if (handicap is num && handicapSetBy != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                handicapSetBy == 'admin'
+                    ? 'Handicap set by the organizer'
+                    : 'Handicap entered by the player',
                 style: theme.textTheme.bodySmall,
               ),
             ),
