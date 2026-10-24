@@ -6,9 +6,17 @@ import 'package:flutter/material.dart';
 // "add team" row (createTeams) and a rename dialog (updateTeam). Only the tournament's
 // organizer or co-admin can write; everyone else gets the function's permission-denied error.
 class TeamsSection extends StatefulWidget {
-  const TeamsSection({super.key, required this.tournamentId});
+  const TeamsSection({
+    super.key,
+    required this.tournamentId,
+    required this.canEdit,
+  });
 
   final String tournamentId;
+
+  // Only organizers and co-admins can change teams (the functions enforce it; this just hides
+  // the controls from everyone else).
+  final bool canEdit;
 
   @override
   State<TeamsSection> createState() => _TeamsSectionState();
@@ -20,9 +28,11 @@ class _TeamsSectionState extends State<TeamsSection> {
   bool _busy = false;
   String? _error;
 
-  FirebaseFunctions get _functions => FirebaseFunctions.instanceFor(region: 'us-central1');
+  FirebaseFunctions get _functions =>
+      FirebaseFunctions.instanceFor(region: 'us-central1');
 
-  CollectionReference<Map<String, dynamic>> get _teams => FirebaseFirestore.instance
+  CollectionReference<Map<String, dynamic>> get _teams => FirebaseFirestore
+      .instance
       .collection('tournaments')
       .doc(widget.tournamentId)
       .collection('teams');
@@ -49,18 +59,18 @@ class _TeamsSectionState extends State<TeamsSection> {
   }
 
   Future<void> _addTeam() => _run(() async {
-        await _functions.httpsCallable('createTeams').call({
-          'tournamentId': widget.tournamentId,
-          'teams': [
-            {
-              'name': _name.text,
-              if (_color.text.trim().isNotEmpty) 'color': _color.text.trim(),
-            },
-          ],
-        });
-        _name.clear();
-        _color.clear();
-      });
+    await _functions.httpsCallable('createTeams').call({
+      'tournamentId': widget.tournamentId,
+      'teams': [
+        {
+          'name': _name.text,
+          if (_color.text.trim().isNotEmpty) 'color': _color.text.trim(),
+        },
+      ],
+    });
+    _name.clear();
+    _color.clear();
+  });
 
   Future<void> _rename(String teamId, String current) async {
     final name = await showDialog<String>(
@@ -78,7 +88,9 @@ class _TeamsSectionState extends State<TeamsSection> {
   }
 
   Color? _parseColor(Object? hex) {
-    if (hex is! String || !RegExp(r'^#[0-9A-Fa-f]{6}$').hasMatch(hex)) return null;
+    if (hex is! String || !RegExp(r'^#[0-9A-Fa-f]{6}$').hasMatch(hex)) {
+      return null;
+    }
     return Color(0xFF000000 | int.parse(hex.substring(1), radix: 16));
   }
 
@@ -93,7 +105,10 @@ class _TeamsSectionState extends State<TeamsSection> {
           stream: _teams.orderBy('createdAt').snapshots(),
           builder: (context, snapshot) {
             if (snapshot.hasError) {
-              return Text('${snapshot.error}', style: TextStyle(color: theme.colorScheme.error));
+              return Text(
+                '${snapshot.error}',
+                style: TextStyle(color: theme.colorScheme.error),
+              );
             }
             final docs = snapshot.data?.docs ?? [];
             if (docs.isEmpty) return const Text('No teams yet.');
@@ -105,41 +120,61 @@ class _TeamsSectionState extends State<TeamsSection> {
                     contentPadding: EdgeInsets.zero,
                     leading: CircleAvatar(
                       radius: 10,
-                      backgroundColor: _parseColor(doc.data()['color']) ?? theme.disabledColor,
+                      backgroundColor:
+                          _parseColor(doc.data()['color']) ??
+                          theme.disabledColor,
                     ),
                     title: Text('${doc.data()['name']}'),
                     subtitle: Text('${doc.data()['color'] ?? 'no color'}'),
-                    trailing: TextButton(
-                      onPressed: _busy ? null : () => _rename(doc.id, '${doc.data()['name']}'),
-                      child: const Text('Rename'),
-                    ),
+                    trailing: widget.canEdit
+                        ? TextButton(
+                            onPressed: _busy
+                                ? null
+                                : () =>
+                                      _rename(doc.id, '${doc.data()['name']}'),
+                            child: const Text('Rename'),
+                          )
+                        : null,
                   ),
               ],
             );
           },
         ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              flex: 3,
-              child: TextField(
-                controller: _name,
-                decoration: const InputDecoration(labelText: 'Team name', isDense: true, border: OutlineInputBorder()),
+        if (widget.canEdit) ...[
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                flex: 3,
+                child: TextField(
+                  controller: _name,
+                  decoration: const InputDecoration(
+                    labelText: 'Team name',
+                    isDense: true,
+                    border: OutlineInputBorder(),
+                  ),
+                ),
               ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              flex: 2,
-              child: TextField(
-                controller: _color,
-                decoration: const InputDecoration(labelText: '#RRGGBB', isDense: true, border: OutlineInputBorder()),
+              const SizedBox(width: 8),
+              Expanded(
+                flex: 2,
+                child: TextField(
+                  controller: _color,
+                  decoration: const InputDecoration(
+                    labelText: '#RRGGBB',
+                    isDense: true,
+                    border: OutlineInputBorder(),
+                  ),
+                ),
               ),
-            ),
-            const SizedBox(width: 8),
-            FilledButton(onPressed: _busy ? null : _addTeam, child: const Text('Add')),
-          ],
-        ),
+              const SizedBox(width: 8),
+              FilledButton(
+                onPressed: _busy ? null : _addTeam,
+                child: const Text('Add'),
+              ),
+            ],
+          ),
+        ],
         if (_error != null) ...[
           const SizedBox(height: 8),
           Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
@@ -161,7 +196,9 @@ class _RenameDialog extends StatefulWidget {
 }
 
 class _RenameDialogState extends State<_RenameDialog> {
-  late final TextEditingController _controller = TextEditingController(text: widget.initial);
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.initial,
+  );
 
   @override
   void dispose() {
@@ -175,8 +212,14 @@ class _RenameDialogState extends State<_RenameDialog> {
       title: const Text('Rename team'),
       content: TextField(controller: _controller, autofocus: true),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-        FilledButton(onPressed: () => Navigator.pop(context, _controller.text), child: const Text('Save')),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, _controller.text),
+          child: const Text('Save'),
+        ),
       ],
     );
   }

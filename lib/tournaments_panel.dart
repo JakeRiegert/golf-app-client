@@ -27,11 +27,14 @@ class _TournamentsPanelState extends State<TournamentsPanel> {
   String? _error;
 
   HttpsCallable get _create =>
-      FirebaseFunctions.instanceFor(region: 'us-central1').httpsCallable('createTournament');
+      FirebaseFunctions.instanceFor(region: 'us-central1')
+          .httpsCallable('createTournament');
 
-  Query<Map<String, dynamic>> get _mine => FirebaseFirestore.instance
-      .collection('tournaments')
-      .where('organizerId', isEqualTo: widget.uid);
+  // Every roster entry carries its player's uid, so "my tournaments" is one collection-group query
+  // (the organizer is on their own roster too). Needs the collection-group index on playerId.
+  Query<Map<String, dynamic>> get _memberships => FirebaseFirestore.instance
+      .collectionGroup('players')
+      .where('playerId', isEqualTo: widget.uid);
 
   final _code = TextEditingController();
   bool _joining = false;
@@ -39,7 +42,8 @@ class _TournamentsPanelState extends State<TournamentsPanel> {
   String? _joinError;
 
   HttpsCallable get _join =>
-      FirebaseFunctions.instanceFor(region: 'us-central1').httpsCallable('joinTournament');
+      FirebaseFunctions.instanceFor(region: 'us-central1')
+          .httpsCallable('joinTournament');
 
   @override
   void dispose() {
@@ -90,7 +94,8 @@ class _TournamentsPanelState extends State<TournamentsPanel> {
       final data = Map<String, dynamic>.from(result.data as Map);
       if (mounted) {
         setState(() {
-          _status = 'Created "${data['name']}" - invite code ${data['inviteCode']}';
+          _status =
+              'Created "${data['name']}" - invite code ${data['inviteCode']}';
           _name.clear();
           _start.clear();
           _end.clear();
@@ -118,7 +123,10 @@ class _TournamentsPanelState extends State<TournamentsPanel> {
         const SizedBox(height: 16),
         TextField(
           controller: _name,
-          decoration: const InputDecoration(labelText: 'Tournament name', border: OutlineInputBorder()),
+          decoration: const InputDecoration(
+            labelText: 'Tournament name',
+            border: OutlineInputBorder(),
+          ),
         ),
         const SizedBox(height: 12),
         Row(
@@ -126,14 +134,20 @@ class _TournamentsPanelState extends State<TournamentsPanel> {
             Expanded(
               child: TextField(
                 controller: _start,
-                decoration: const InputDecoration(labelText: 'Start date', border: OutlineInputBorder()),
+                decoration: const InputDecoration(
+                  labelText: 'Start date',
+                  border: OutlineInputBorder(),
+                ),
               ),
             ),
             const SizedBox(width: 12),
             Expanded(
               child: TextField(
                 controller: _end,
-                decoration: const InputDecoration(labelText: 'End date', border: OutlineInputBorder()),
+                decoration: const InputDecoration(
+                  labelText: 'End date',
+                  border: OutlineInputBorder(),
+                ),
               ),
             ),
           ],
@@ -159,12 +173,18 @@ class _TournamentsPanelState extends State<TournamentsPanel> {
         const SizedBox(height: 24),
         Text('Join a tournament', style: theme.textTheme.headlineSmall),
         const SizedBox(height: 4),
-        Text('Goes through the joinTournament function.', style: theme.textTheme.bodySmall),
+        Text(
+          'Goes through the joinTournament function.',
+          style: theme.textTheme.bodySmall,
+        ),
         const SizedBox(height: 16),
         TextField(
           controller: _code,
           textCapitalization: TextCapitalization.characters,
-          decoration: const InputDecoration(labelText: 'Invite code', border: OutlineInputBorder()),
+          decoration: const InputDecoration(
+            labelText: 'Invite code',
+            border: OutlineInputBorder(),
+          ),
           onSubmitted: (_) => _joining ? null : _joinTournament(),
         ),
         const SizedBox(height: 12),
@@ -183,18 +203,31 @@ class _TournamentsPanelState extends State<TournamentsPanel> {
         const SizedBox(height: 24),
         Text('Your tournaments', style: theme.textTheme.headlineSmall),
         const SizedBox(height: 4),
-        Text('Live from Firestore (tournaments you organize).', style: theme.textTheme.bodySmall),
+        Text(
+          'Live from Firestore (every tournament you are on the roster of).',
+          style: theme.textTheme.bodySmall,
+        ),
         const SizedBox(height: 8),
         StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-          stream: _mine.snapshots(),
+          stream: _memberships.snapshots(),
           builder: (context, snapshot) {
             if (snapshot.hasError) {
-              return Text('${snapshot.error}', style: TextStyle(color: theme.colorScheme.error));
+              return Text(
+                '${snapshot.error}',
+                style: TextStyle(color: theme.colorScheme.error),
+              );
             }
             final docs = snapshot.data?.docs ?? [];
             if (docs.isEmpty) return const Text('None yet.');
             return Column(
-              children: [for (final doc in docs) _TournamentTile(doc: doc)],
+              children: [
+                for (final entry in docs)
+                  _TournamentTile(
+                    key: ValueKey(entry.reference.path),
+                    uid: widget.uid,
+                    tournamentId: entry.reference.parent.parent!.id,
+                  ),
+              ],
             );
           },
         ),
@@ -204,39 +237,80 @@ class _TournamentsPanelState extends State<TournamentsPanel> {
 }
 
 class _TournamentTile extends StatelessWidget {
-  const _TournamentTile({required this.doc});
+  const _TournamentTile({
+    super.key,
+    required this.uid,
+    required this.tournamentId,
+  });
 
-  final QueryDocumentSnapshot<Map<String, dynamic>> doc;
+  final String uid;
+  final String tournamentId;
 
   @override
   Widget build(BuildContext context) {
-    final data = doc.data();
-    final dates = [data['startDate'], data['endDate']].whereType<String>().join(' to ');
-    return Card(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          ListTile(
-            title: Text('${data['name']}'),
-            subtitle: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-              stream: doc.reference.collection('private').doc('settings').snapshots(),
-              builder: (context, snapshot) {
-                final code = snapshot.data?.data()?['inviteCode'] ?? '-';
-                return Text(
-                  '${data['visibility']} - ${data['status']}'
-                  '${dates.isEmpty ? '' : ' - $dates'}\n'
-                  'Invite code: $code',
-                );
-              },
+    final tournament = FirebaseFirestore.instance
+        .collection('tournaments')
+        .doc(tournamentId);
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: tournament.snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          // Rules refuse non-admins a suspended tournament, so this is what a member sees.
+          return Card(
+            child: ListTile(
+              title: const Text('Tournament unavailable'),
+              subtitle: Text(
+                'It may be suspended. $tournamentId\n${snapshot.error}',
+              ),
+              isThreeLine: true,
             ),
-            isThreeLine: true,
+          );
+        }
+        final data = snapshot.data?.data();
+        if (data == null) return const SizedBox.shrink();
+        final isOrganizer = data['organizerId'] == uid;
+        final isAdmin = isOrganizer || data['coAdminId'] == uid;
+        final role = isOrganizer
+            ? 'organizer'
+            : (isAdmin ? 'co-admin' : 'player');
+        final dates = [
+          data['startDate'],
+          data['endDate'],
+        ].whereType<String>().join(' to ');
+        return Card(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              ListTile(
+                title: Text('${data['name']}'),
+                subtitle: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                  stream: tournament
+                      .collection('private')
+                      .doc('settings')
+                      .snapshots(),
+                  builder: (context, snapshot) {
+                    final code = snapshot.data?.data()?['inviteCode'] ?? '-';
+                    return Text(
+                      'You: $role\n'
+                      '${data['visibility']} - ${data['status']}'
+                      '${dates.isEmpty ? '' : ' - $dates'}\n'
+                      'Invite code: $code',
+                    );
+                  },
+                ),
+                isThreeLine: true,
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: TeamsSection(
+                  tournamentId: tournamentId,
+                  canEdit: isAdmin,
+                ),
+              ),
+            ],
           ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            child: TeamsSection(tournamentId: doc.id),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
