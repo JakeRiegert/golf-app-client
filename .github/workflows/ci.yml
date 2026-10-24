@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, gcp]
   pull_request:
 
 # Build verification only -- no deploy target has been decided for the client yet (App
