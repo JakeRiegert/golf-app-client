@@ -230,7 +230,9 @@ class _PlayerRowState extends State<_PlayerRow> {
     final teamId = widget.data['teamId'] as String?;
     final assignedBy = widget.data['teamAssignedBy'] as String?;
     final lockedByAdmin = assignedBy == 'admin';
-    final canPick = widget.canEdit || (widget.isMe && !lockedByAdmin);
+    // Players pick their own team only before the start, and never once an admin has set it.
+    final canPick =
+        widget.canEdit || (widget.isMe && !lockedByAdmin && !widget.started);
     // A team the roster entry points at that no longer exists shows as "No team".
     final selected = widget.teams.containsKey(teamId) ? teamId : null;
 
@@ -344,7 +346,9 @@ class _PlayerRowState extends State<_PlayerRow> {
               child: Text(
                 lockedByAdmin
                     ? 'Team set by the organizer'
-                    : 'Team chosen by the player',
+                    : (widget.isMe && widget.started && !widget.canEdit
+                          ? 'Team chosen by the player (locked: tournament started)'
+                          : 'Team chosen by the player'),
                 style: theme.textTheme.bodySmall,
               ),
             ),
