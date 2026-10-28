@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 
+import 'date_field.dart';
 import 'players_section.dart';
 import 'teams_section.dart';
 
@@ -118,7 +119,7 @@ class _TournamentsPanelState extends State<TournamentsPanel> {
         Text('Create a tournament', style: theme.textTheme.headlineSmall),
         const SizedBox(height: 4),
         Text(
-          'Goes through the createTournament function. Dates are optional (YYYY-MM-DD).',
+          'Goes through the createTournament function. Dates are optional.',
           style: theme.textTheme.bodySmall,
         ),
         const SizedBox(height: 16),
@@ -133,22 +134,19 @@ class _TournamentsPanelState extends State<TournamentsPanel> {
         Row(
           children: [
             Expanded(
-              child: TextField(
+              child: DateField(
                 controller: _start,
-                decoration: const InputDecoration(
-                  labelText: 'Start date',
-                  border: OutlineInputBorder(),
-                ),
+                label: 'Start date',
+                border: const OutlineInputBorder(),
               ),
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: TextField(
+              child: DateField(
                 controller: _end,
-                decoration: const InputDecoration(
-                  labelText: 'End date',
-                  border: OutlineInputBorder(),
-                ),
+                label: 'End date',
+                notBefore: _start,
+                border: const OutlineInputBorder(),
               ),
             ),
           ],
@@ -542,18 +540,8 @@ class _EditDialogState extends State<_EditDialog> {
                 controller: _name,
                 decoration: const InputDecoration(labelText: 'Name'),
               ),
-              TextField(
-                controller: _start,
-                decoration: const InputDecoration(
-                  labelText: 'Start date (YYYY-MM-DD)',
-                ),
-              ),
-              TextField(
-                controller: _end,
-                decoration: const InputDecoration(
-                  labelText: 'End date (YYYY-MM-DD)',
-                ),
-              ),
+              DateField(controller: _start, label: 'Start date'),
+              DateField(controller: _end, label: 'End date', notBefore: _start),
               TextField(
                 controller: _pot,
                 keyboardType: const TextInputType.numberWithOptions(
