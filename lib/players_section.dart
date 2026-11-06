@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 
+import 'dialog_utils.dart';
 import 'input_parsing.dart';
 
 // Debug-harness slice for the roster inside one tournament. Everyone on the roster is listed live
@@ -78,6 +79,41 @@ class _PlayersSectionState extends State<PlayersSection> {
     });
   });
 
+  // Admins only: take a player off the roster. Before the start they are deleted (and can rejoin with
+  // the invite code); after it they stay in the record as withdrawn and can no longer make changes.
+  Future<void> _removePlayer(String playerId, String label) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Remove $label?'),
+        content: Text(
+          widget.started
+              ? 'The tournament has started, so $label stays in the record as '
+                    'withdrawn and can no longer make changes. Everyone is told.'
+              : '$label comes off the roster and their team and handicap are '
+                    'dropped. They can rejoin with the invite code.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => popDialog(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => popDialog(context, true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await _run(() async {
+      await _functions.httpsCallable('removePlayer').call({
+        'tournamentId': widget.tournamentId,
+        'playerId': playerId,
+      });
+    });
+  }
+
   Future<void> _setOwnHandicap(num? handicap) => _run(() async {
     await _functions.httpsCallable('setMyHandicap').call({
       'tournamentId': widget.tournamentId,
@@ -134,6 +170,7 @@ class _PlayersSectionState extends State<PlayersSection> {
                         isOrganizer: doc.id == widget.organizerId,
                         isCoAdmin: doc.id == widget.coAdminId,
                         onCoAdmin: (make) => _setCoAdmin(make ? doc.id : null),
+                        onRemove: (label) => _removePlayer(doc.id, label),
                         busy: _busy,
                         onAdminTeam: (teamId) =>
                             _assign(doc.id, {'teamId': teamId}),
@@ -169,6 +206,7 @@ class _PlayerRow extends StatefulWidget {
     required this.isOrganizer,
     required this.isCoAdmin,
     required this.onCoAdmin,
+    required this.onRemove,
     required this.busy,
     required this.onAdminTeam,
     required this.onAdminHandicap,
@@ -185,6 +223,7 @@ class _PlayerRow extends StatefulWidget {
   final bool isOrganizer;
   final bool isCoAdmin;
   final void Function(bool make) onCoAdmin;
+  final void Function(String label) onRemove;
   final bool busy;
   final void Function(String? teamId) onAdminTeam;
   final void Function(num? handicap) onAdminHandicap;
@@ -242,15 +281,20 @@ class _PlayerRowState extends State<_PlayerRow> {
     final teamId = widget.data['teamId'] as String?;
     final assignedBy = widget.data['teamAssignedBy'] as String?;
     final lockedByAdmin = assignedBy == 'admin';
+    // A withdrawn player was removed after the start: their entry is kept for the record, but
+    // nothing about it can be changed from here.
+    final withdrawn = widget.data['withdrawn'] == true;
     // Players pick their own team only before the start, and never once an admin has set it.
     final canPick =
-        widget.canEdit || (widget.isMe && !lockedByAdmin && !widget.started);
+        !withdrawn &&
+        (widget.canEdit || (widget.isMe && !lockedByAdmin && !widget.started));
     // A team the roster entry points at that no longer exists shows as "No team".
     final selected = widget.teams.containsKey(teamId) ? teamId : null;
 
     final handicap = widget.data['handicap'];
     // Admins can always change a handicap; a player only their own, and only before the start.
-    final canEditHandicap = widget.canEdit || (widget.isMe && !widget.started);
+    final canEditHandicap =
+        !withdrawn && (widget.canEdit || (widget.isMe && !widget.started));
     final handicapSetBy = widget.data['handicapSetBy'] as String?;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
@@ -272,12 +316,17 @@ class _PlayerRowState extends State<_PlayerRow> {
                 children: [
                   Expanded(
                     child: Text(
-                      '${widget.isMe ? '$label (you)' : label}$role',
-                      style: theme.textTheme.bodyMedium,
+                      '${widget.isMe ? '$label (you)' : label}$role'
+                      '${withdrawn ? ' - withdrawn' : ''}',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        decoration: withdrawn
+                            ? TextDecoration.lineThrough
+                            : null,
+                      ),
                     ),
                   ),
                   // Admins can name or remove the co-admin; the organizer is already an admin.
-                  if (widget.canEdit && !widget.isOrganizer)
+                  if (widget.canEdit && !widget.isOrganizer && !withdrawn)
                     TextButton(
                       onPressed: widget.busy
                           ? null
@@ -285,6 +334,17 @@ class _PlayerRowState extends State<_PlayerRow> {
                       child: Text(
                         widget.isCoAdmin ? 'Remove co-admin' : 'Make co-admin',
                       ),
+                    ),
+                  // Admins can take anyone but the organizer, and themselves, off the roster.
+                  if (widget.canEdit &&
+                      !widget.isOrganizer &&
+                      !widget.isMe &&
+                      !withdrawn)
+                    TextButton(
+                      onPressed: widget.busy
+                          ? null
+                          : () => widget.onRemove(label),
+                      child: const Text('Remove'),
                     ),
                 ],
               );

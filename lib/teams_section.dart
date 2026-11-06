@@ -89,6 +89,38 @@ class _TeamsSectionState extends State<TeamsSection> {
     });
   }
 
+  // Before the start a team can go and its players return to "No team"; after the start the server
+  // only deletes a team nobody is on, and says so if someone still is.
+  Future<void> _delete(String teamId, String name) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Delete team "$name"?'),
+        content: const Text(
+          'Players on it go back to "No team". Once the tournament has started, '
+          'a team with players on it cannot be deleted: move them off first.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => popDialog(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => popDialog(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await _run(() async {
+      await _functions.httpsCallable('deleteTeam').call({
+        'tournamentId': widget.tournamentId,
+        'teamId': teamId,
+      });
+    });
+  }
+
   Color? _parseColor(Object? hex) {
     if (hex is! String || !RegExp(r'^#[0-9A-Fa-f]{6}$').hasMatch(hex)) {
       return null;
@@ -129,12 +161,28 @@ class _TeamsSectionState extends State<TeamsSection> {
                     title: Text('${doc.data()['name']}'),
                     subtitle: Text('${doc.data()['color'] ?? 'no color'}'),
                     trailing: widget.canEdit
-                        ? TextButton(
-                            onPressed: _busy
-                                ? null
-                                : () =>
-                                      _rename(doc.id, '${doc.data()['name']}'),
-                            child: const Text('Rename'),
+                        ? Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              TextButton(
+                                onPressed: _busy
+                                    ? null
+                                    : () => _rename(
+                                        doc.id,
+                                        '${doc.data()['name']}',
+                                      ),
+                                child: const Text('Rename'),
+                              ),
+                              TextButton(
+                                onPressed: _busy
+                                    ? null
+                                    : () => _delete(
+                                        doc.id,
+                                        '${doc.data()['name']}',
+                                      ),
+                                child: const Text('Delete'),
+                              ),
+                            ],
                           )
                         : null,
                   ),
