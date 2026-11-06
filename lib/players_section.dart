@@ -2,6 +2,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 
+import 'input_parsing.dart';
+
 // Debug-harness slice for the roster inside one tournament. Everyone on the roster is listed live
 // from Firestore with their team and handicap. Two ways to put a player on a team, one record:
 //   - a player can pick or change their own team (chooseTeam) until an admin has assigned them;
@@ -198,6 +200,8 @@ class _PlayerRowState extends State<_PlayerRow> {
     text: _handicapText(widget.data['handicap']),
   );
 
+  String? _handicapError;
+
   static String _handicapText(Object? value) => value is num ? '$value' : '';
 
   @override
@@ -205,6 +209,7 @@ class _PlayerRowState extends State<_PlayerRow> {
     super.didUpdateWidget(old);
     if (old.data['handicap'] != widget.data['handicap']) {
       _handicap.text = _handicapText(widget.data['handicap']);
+      _handicapError = null;
     }
   }
 
@@ -215,8 +220,15 @@ class _PlayerRowState extends State<_PlayerRow> {
   }
 
   void _saveHandicap() {
-    final text = _handicap.text.trim();
-    final value = text.isEmpty ? null : num.tryParse(text);
+    // An empty box clears the handicap; text that is not a number in range is an error to show,
+    // not a silent clear.
+    final parsed = parseHandicap(_handicap.text);
+    if (!parsed.ok) {
+      setState(() => _handicapError = parsed.error);
+      return;
+    }
+    setState(() => _handicapError = null);
+    final value = parsed.value;
     if (widget.canEdit) {
       widget.onAdminHandicap(value);
     } else {
@@ -320,8 +332,15 @@ class _PlayerRowState extends State<_PlayerRow> {
                           decimal: true,
                           signed: true,
                         ),
+                        onChanged: (_) {
+                          if (_handicapError != null) {
+                            setState(() => _handicapError = null);
+                          }
+                        },
                         decoration: InputDecoration(
                           labelText: 'Handicap',
+                          errorText: _handicapError,
+                          errorMaxLines: 3,
                           isDense: true,
                           border: const OutlineInputBorder(),
                           suffixIcon: IconButton(

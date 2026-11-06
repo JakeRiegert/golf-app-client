@@ -2,6 +2,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 
+import 'dialog_utils.dart';
+
 // Debug-harness slice for teams inside one tournament: a live list read from Firestore, an
 // "add team" row (createTeams) and a rename dialog (updateTeam). Only the tournament's
 // organizer or co-admin can write; everyone else gets the function's permission-denied error.
@@ -213,11 +215,11 @@ class _RenameDialogState extends State<_RenameDialog> {
       content: TextField(controller: _controller, autofocus: true),
       actions: [
         TextButton(
-          onPressed: () => Navigator.pop(context),
+          onPressed: () => popDialog(context),
           child: const Text('Cancel'),
         ),
         FilledButton(
-          onPressed: () => Navigator.pop(context, _controller.text),
+          onPressed: () => popDialog(context, _controller.text),
           child: const Text('Save'),
         ),
       ],

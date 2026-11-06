@@ -3,6 +3,8 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 
 import 'date_field.dart';
+import 'dialog_utils.dart';
+import 'input_parsing.dart';
 import 'players_section.dart';
 import 'teams_section.dart';
 
@@ -101,6 +103,7 @@ class _TournamentsPanelState extends State<TournamentsPanel> {
           _name.clear();
           _start.clear();
           _end.clear();
+          _public = false; // the whole form resets, the Public switch included
         });
       }
     } on FirebaseFunctionsException catch (e) {
@@ -384,11 +387,11 @@ class _AdminActionsState extends State<_AdminActions> {
         content: Text(body),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () => popDialog(context, false),
             child: const Text('Cancel'),
           ),
           FilledButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => popDialog(context, true),
             child: Text(action),
           ),
         ],
@@ -503,6 +506,7 @@ class _EditDialogState extends State<_EditDialog> {
         : '',
   );
   late bool _public = widget.data['visibility'] == 'public';
+  String? _potError;
 
   @override
   void dispose() {
@@ -516,12 +520,17 @@ class _EditDialogState extends State<_EditDialog> {
   void _save() {
     String? orNull(TextEditingController c) =>
         c.text.trim().isEmpty ? null : c.text.trim();
-    final pot = orNull(_pot);
-    Navigator.pop(context, <String, Object?>{
+    // Text that is not a number is an error to show, never "no pot" (which would clear it).
+    final pot = parseWagerPot(_pot.text);
+    if (!pot.ok) {
+      setState(() => _potError = pot.error);
+      return;
+    }
+    popDialog(context, <String, Object?>{
       'name': _name.text,
       'startDate': orNull(_start),
       'endDate': orNull(_end),
-      'wagerPotAmount': pot == null ? null : num.tryParse(pot),
+      'wagerPotAmount': pot.value,
       'visibility': _public ? 'public' : 'private',
     });
   }
@@ -547,9 +556,13 @@ class _EditDialogState extends State<_EditDialog> {
                 keyboardType: const TextInputType.numberWithOptions(
                   decimal: true,
                 ),
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: 'Team wager pot (optional)',
+                  errorText: _potError,
                 ),
+                onChanged: (_) {
+                  if (_potError != null) setState(() => _potError = null);
+                },
               ),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
@@ -563,7 +576,7 @@ class _EditDialogState extends State<_EditDialog> {
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.pop(context),
+          onPressed: () => popDialog(context),
           child: const Text('Cancel'),
         ),
         FilledButton(onPressed: _save, child: const Text('Save')),
