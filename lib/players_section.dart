@@ -56,7 +56,10 @@ class _PlayersSectionState extends State<PlayersSection> {
     try {
       await action();
     } on FirebaseFunctionsException catch (e) {
-      if (mounted) setState(() => _error = '${e.code}: ${e.message}');
+      if (mounted) {
+        setState(() => _error = '${e.code}: ${e.message}');
+        showErrorMessage(context, e.message ?? e.code);
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
