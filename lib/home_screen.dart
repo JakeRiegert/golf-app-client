@@ -5,11 +5,13 @@ import 'package:flutter/material.dart';
 
 import 'tournaments_panel.dart';
 
-// Signed-in home. For now this is the first slice of the debug harness: it calls the
-// upsertPlayerProfile Cloud Function once on arrival (creating or touching this user's profile),
-// shows the profile live from Firestore, and lets you edit the display name through the same
-// function. Reads come straight from Firestore (live listeners); every write goes through a
-// function, never directly from the client.
+// Signed-in home, in two pages (bottom tabs): the tournaments you are on the roster of, and your
+// profile. Each tournament then opens its own pages (Overview, Teams, Players, Rounds).
+//
+// On arrival this calls the upsertPlayerProfile Cloud Function once (creating or touching this user's
+// profile). The profile is shown live from Firestore and the display name is edited through the same
+// function. Reads come straight from Firestore (live listeners); every write goes through a function,
+// never directly from the client.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.user});
 
@@ -25,6 +27,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _saving = false;
   String? _status;
   String? _error;
+  int _tab = 0;
 
   HttpsCallable get _upsert =>
       FirebaseFunctions.instanceFor(region: 'us-central1').httpsCallable('upsertPlayerProfile');
@@ -78,98 +81,115 @@ class _HomeScreenState extends State<HomeScreen> {
     return '-';
   }
 
+  // A readable width on a laptop; on a phone the page simply fills the screen.
+  Widget _page(Widget child) => Align(
+    alignment: Alignment.topCenter,
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 560),
+      child: SingleChildScrollView(padding: const EdgeInsets.all(16), child: child),
+    ),
+  );
+
+  Widget _profile(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text('Your profile', style: theme.textTheme.headlineSmall),
+        const SizedBox(height: 4),
+        Text(
+          'Live from Firestore. Edits go through the upsertPlayerProfile function.',
+          style: theme.textTheme.bodySmall,
+        ),
+        const SizedBox(height: 16),
+        StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+          stream: _profileDoc.snapshots(),
+          builder: (context, snapshot) {
+            final data = snapshot.data?.data();
+            if (data == null) {
+              return const Text('Creating your profile...');
+            }
+            if (!_nameFocus.hasFocus) {
+              _nameController.text = (data['displayName'] as String?) ?? '';
+            }
+            final meta = snapshot.data!.metadata;
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: _nameController,
+                  focusNode: _nameFocus,
+                  decoration: const InputDecoration(
+                    labelText: 'Display name',
+                    border: OutlineInputBorder(),
+                  ),
+                  onSubmitted: (_) => _saving ? null : _saveName(),
+                ),
+                const SizedBox(height: 12),
+                FilledButton(
+                  onPressed: _saving ? null : _saveName,
+                  child: const Text('Save display name'),
+                ),
+                const SizedBox(height: 16),
+                Text('Avatar URL: ${data['avatarUrl'] ?? '-'}'),
+                Text('Created: ${_formatTime(data['createdAt'])}'),
+                Text('Updated: ${_formatTime(data['updatedAt'])}'),
+                Text(
+                  'Snapshot: ${meta.isFromCache ? 'from cache' : 'from server'}'
+                  '${meta.hasPendingWrites ? ', pending write' : ''}',
+                  style: theme.textTheme.bodySmall,
+                ),
+              ],
+            );
+          },
+        ),
+        const SizedBox(height: 16),
+        StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+          stream: _privateDoc.snapshots(),
+          builder: (context, snapshot) {
+            final email = snapshot.data?.data()?['email'];
+            return Text('Email (private, only you can read this): ${email ?? '-'}');
+          },
+        ),
+        if (_status != null) ...[
+          const SizedBox(height: 12),
+          Text(_status!, style: const TextStyle(color: Colors.green)),
+        ],
+        if (_error != null) ...[
+          const SizedBox(height: 12),
+          Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
+        ],
+        const SizedBox(height: 24),
+        OutlinedButton(
+          onPressed: () => FirebaseAuth.instance.signOut(),
+          child: const Text('Sign out'),
+        ),
+        const SizedBox(height: 16),
+        Text('uid: ${widget.user.uid}', style: theme.textTheme.bodySmall),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Golf Live Scoring'),
-        actions: [
-          TextButton(
-            onPressed: () => FirebaseAuth.instance.signOut(),
-            child: const Text('Sign out'),
+      appBar: AppBar(title: Text(_tab == 0 ? 'Tournaments' : 'Profile')),
+      body: _tab == 0 ? _page(TournamentsPanel(uid: widget.user.uid)) : _page(_profile(context)),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _tab,
+        onDestinationSelected: (i) => setState(() => _tab = i),
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.emoji_events_outlined),
+            selectedIcon: Icon(Icons.emoji_events),
+            label: 'Tournaments',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.person_outline),
+            selectedIcon: Icon(Icons.person),
+            label: 'Profile',
           ),
         ],
-      ),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 480),
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text('Your profile', style: Theme.of(context).textTheme.headlineSmall),
-                const SizedBox(height: 4),
-                Text(
-                  'Live from Firestore. Edits go through the upsertPlayerProfile function.',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                const SizedBox(height: 16),
-                StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-                  stream: _profileDoc.snapshots(),
-                  builder: (context, snapshot) {
-                    final data = snapshot.data?.data();
-                    if (data == null) {
-                      return const Text('Creating your profile...');
-                    }
-                    if (!_nameFocus.hasFocus) {
-                      _nameController.text = (data['displayName'] as String?) ?? '';
-                    }
-                    final meta = snapshot.data!.metadata;
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        TextField(
-                          controller: _nameController,
-                          focusNode: _nameFocus,
-                          decoration: const InputDecoration(
-                            labelText: 'Display name',
-                            border: OutlineInputBorder(),
-                          ),
-                          onSubmitted: (_) => _saving ? null : _saveName(),
-                        ),
-                        const SizedBox(height: 12),
-                        FilledButton(
-                          onPressed: _saving ? null : _saveName,
-                          child: const Text('Save display name'),
-                        ),
-                        const SizedBox(height: 16),
-                        Text('Avatar URL: ${data['avatarUrl'] ?? '-'}'),
-                        Text('Created: ${_formatTime(data['createdAt'])}'),
-                        Text('Updated: ${_formatTime(data['updatedAt'])}'),
-                        Text(
-                          'Snapshot: ${meta.isFromCache ? 'from cache' : 'from server'}'
-                          '${meta.hasPendingWrites ? ', pending write' : ''}',
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                      ],
-                    );
-                  },
-                ),
-                const SizedBox(height: 16),
-                StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-                  stream: _privateDoc.snapshots(),
-                  builder: (context, snapshot) {
-                    final email = snapshot.data?.data()?['email'];
-                    return Text('Email (private, only you can read this): ${email ?? '-'}');
-                  },
-                ),
-                if (_status != null) ...[
-                  const SizedBox(height: 12),
-                  Text(_status!, style: const TextStyle(color: Colors.green)),
-                ],
-                if (_error != null) ...[
-                  const SizedBox(height: 12),
-                  Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
-                ],
-                const Divider(height: 48),
-                TournamentsPanel(uid: widget.user.uid),
-                const SizedBox(height: 24),
-                Text('uid: ${widget.user.uid}', style: Theme.of(context).textTheme.bodySmall),
-              ],
-            ),
-          ),
-        ),
       ),
     );
   }
