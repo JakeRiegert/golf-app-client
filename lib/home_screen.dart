@@ -3,6 +3,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'dialog_utils.dart';
 import 'tournaments_panel.dart';
 
 // Signed-in home, in two pages (bottom tabs): the tournaments you are on the roster of, and your
@@ -55,7 +56,7 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       await _upsert.call();
     } on FirebaseFunctionsException catch (e) {
-      if (mounted) setState(() => _error = '${e.code}: ${e.message}');
+      if (mounted) setState(() => _error = friendlyError(e));
     }
   }
 
@@ -70,7 +71,7 @@ class _HomeScreenState extends State<HomeScreen> {
       await _upsert.call({'displayName': name});
       if (mounted) setState(() => _status = 'Saved.');
     } on FirebaseFunctionsException catch (e) {
-      if (mounted) setState(() => _error = '${e.code}: ${e.message}');
+      if (mounted) setState(() => _error = friendlyError(e));
     } finally {
       if (mounted) setState(() => _saving = false);
     }

@@ -74,7 +74,7 @@ class TournamentsPanel extends StatelessWidget {
           ),
         );
     } on FirebaseFunctionsException catch (e) {
-      if (context.mounted) showErrorMessage(context, e.message ?? e.code);
+      if (context.mounted) showErrorMessage(context, friendlyError(e));
     }
   }
 

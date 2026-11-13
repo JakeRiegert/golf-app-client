@@ -71,7 +71,7 @@ Future<bool> _call(BuildContext context, String name, Map<String, Object?> paylo
     if (context.mounted && done != null) _showDone(context, done);
     return true;
   } on FirebaseFunctionsException catch (e) {
-    if (context.mounted) showErrorMessage(context, e.message ?? e.code);
+    if (context.mounted) showErrorMessage(context, friendlyError(e));
     return false;
   }
 }

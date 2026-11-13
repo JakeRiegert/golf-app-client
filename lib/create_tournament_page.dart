@@ -39,7 +39,7 @@ class _CreateTournamentPageState extends State<CreateTournamentPage> {
       });
       if (mounted) Navigator.of(context).pop(Map<String, dynamic>.from(result.data as Map));
     } on FirebaseFunctionsException catch (e) {
-      if (mounted) showErrorMessage(context, e.message ?? e.code);
+      if (mounted) showErrorMessage(context, friendlyError(e));
     } finally {
       if (mounted) setState(() => _creating = false);
     }

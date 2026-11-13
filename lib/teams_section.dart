@@ -55,8 +55,8 @@ class _TeamsSectionState extends State<TeamsSection> {
       await action();
     } on FirebaseFunctionsException catch (e) {
       if (mounted) {
-        setState(() => _error = '${e.code}: ${e.message}');
-        showErrorMessage(context, e.message ?? e.code);
+        setState(() => _error = friendlyError(e));
+        showErrorMessage(context, friendlyError(e));
       }
     } finally {
       if (mounted) setState(() => _busy = false);
