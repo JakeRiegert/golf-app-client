@@ -136,18 +136,25 @@ class _RoundsSectionState extends State<RoundsSection> {
             if (snapshot.hasError) {
               return Text('${snapshot.error}', style: TextStyle(color: theme.colorScheme.error));
             }
-            final docs = snapshot.data?.docs ?? [];
+            // Play order: by date, then the order they were added. The label 'Round N' is the position in this
+            // order, so a round added later for an earlier day slots in without renaming the others.
+            final docs = [...(snapshot.data?.docs ?? [])]..sort((a, b) {
+                final byDate = '${a.data()['date']}'.compareTo('${b.data()['date']}');
+                if (byDate != 0) return byDate;
+                return ((a.data()['number'] as num?) ?? 0).compareTo((b.data()['number'] as num?) ?? 0);
+              });
             if (docs.isEmpty) {
               return const Padding(padding: EdgeInsets.symmetric(vertical: 16), child: Text('No rounds yet.'));
             }
             return Column(
               children: [
-                for (final doc in docs)
+                for (var i = 0; i < docs.length; i++)
                   _RoundCard(
-                    key: ValueKey(doc.id),
+                    key: ValueKey(docs[i].id),
+                    position: i + 1,
                     tournamentId: widget.tournamentId,
-                    roundId: doc.id,
-                    data: doc.data(),
+                    roundId: docs[i].id,
+                    data: docs[i].data(),
                     uid: widget.uid,
                     canEdit: widget.canEdit,
                   ),
@@ -163,6 +170,7 @@ class _RoundsSectionState extends State<RoundsSection> {
 class _RoundCard extends StatefulWidget {
   const _RoundCard({
     super.key,
+    required this.position,
     required this.tournamentId,
     required this.roundId,
     required this.data,
@@ -170,6 +178,8 @@ class _RoundCard extends StatefulWidget {
     required this.canEdit,
   });
 
+  // 1-based place in play order, shown as 'Round N' when the round has no name.
+  final int position;
   final String tournamentId;
   final String roundId;
   final Map<String, dynamic> data;
@@ -304,6 +314,24 @@ class _RoundCardState extends State<_RoundCard> {
     });
   }
 
+  String _title() {
+    final name = widget.data['name'];
+    return name is String && name.isNotEmpty ? name : 'Round ${widget.position}';
+  }
+
+  Future<void> _delete() async {
+    final ok = await _confirm(
+      context,
+      'Delete this round?',
+      'The round and its groups are removed, and everyone is told. This cannot be undone.',
+      'Delete',
+    );
+    if (!ok || !mounted) return;
+    await _run(() async {
+      await _call(context, 'deleteRound', {'tournamentId': widget.tournamentId, 'roundId': widget.roundId}, done: 'Round deleted.');
+    });
+  }
+
   String _courseText() {
     if (!_hasCourse) return 'No course yet';
     final all = (_course['holes'] as List?) ?? const [];
@@ -329,7 +357,7 @@ class _RoundCardState extends State<_RoundCard> {
               children: [
                 Expanded(
                   child: Text(
-                    'Round ${widget.data['number']} · ${widget.data['date']}',
+                    '${_title()} · ${widget.data['date']}',
                     style: theme.textTheme.titleMedium,
                   ),
                 ),
@@ -343,13 +371,20 @@ class _RoundCardState extends State<_RoundCard> {
               style: theme.textTheme.bodyMedium,
             ),
             if (widget.canEdit)
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton.icon(
-                  onPressed: _busy ? null : _editSettings,
-                  icon: const Icon(Icons.tune),
-                  label: const Text('Round settings'),
-                ),
+              Wrap(
+                children: [
+                  TextButton.icon(
+                    onPressed: _busy ? null : _editSettings,
+                    icon: const Icon(Icons.tune),
+                    label: const Text('Round settings'),
+                  ),
+                  if (status == 'scheduled')
+                    TextButton.icon(
+                      onPressed: _busy ? null : _delete,
+                      icon: const Icon(Icons.delete_outline),
+                      label: const Text('Delete'),
+                    ),
+                ],
               ),
             const Divider(height: 24),
             StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
@@ -469,8 +504,16 @@ class _GroupTile extends StatelessWidget {
 
 // What the add-round and round-settings dialog hands back.
 class _RoundValues {
-  const _RoundValues({required this.date, required this.holesKey, required this.maxGroupSize, required this.useSampleCourse});
+  const _RoundValues({
+    required this.name,
+    required this.date,
+    required this.holesKey,
+    required this.maxGroupSize,
+    required this.useSampleCourse,
+  });
 
+  // Empty means no name (the app then shows 'Round N'); sent as null, which also clears an old name.
+  final String name;
   final String date;
   final String holesKey;
   final int maxGroupSize;
@@ -479,6 +522,7 @@ class _RoundValues {
   Map<String, Object?> toPayload() {
     final holes = HolesChoice.fromKey(holesKey);
     return {
+      'name': name.trim().isEmpty ? null : name.trim(),
       'date': date,
       'holesPlanned': holes.holesPlanned,
       'firstHole': holes.firstHole,
@@ -498,6 +542,7 @@ class _RoundDialog extends StatefulWidget {
 }
 
 class _RoundDialogState extends State<_RoundDialog> {
+  late final _name = TextEditingController(text: (widget.initial?['name'] as String?) ?? '');
   late final _date = TextEditingController(text: (widget.initial?['date'] as String?) ?? '');
   late String _holes = HolesChoice.keyOf(
     (widget.initial?['holesPlanned'] as num?)?.toInt() ?? 18,
@@ -524,6 +569,7 @@ class _RoundDialogState extends State<_RoundDialog> {
 
   @override
   void dispose() {
+    _name.dispose();
     _date.dispose();
     super.dispose();
   }
@@ -535,7 +581,13 @@ class _RoundDialogState extends State<_RoundDialog> {
     }
     popDialog(
       context,
-      _RoundValues(date: _date.text.trim(), holesKey: _holes, maxGroupSize: _size, useSampleCourse: _sample && !_courseIsOther),
+      _RoundValues(
+        name: _name.text,
+        date: _date.text.trim(),
+        holesKey: _holes,
+        maxGroupSize: _size,
+        useSampleCourse: _sample && !_courseIsOther,
+      ),
     );
   }
 
@@ -550,6 +602,11 @@ class _RoundDialogState extends State<_RoundDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              TextField(
+                controller: _name,
+                maxLength: 40,
+                decoration: const InputDecoration(labelText: 'Name (optional)', hintText: 'Practice, Friday AM...'),
+              ),
               DateField(controller: _date, label: 'Date'),
               const SizedBox(height: 16),
               const Text('Holes'),
