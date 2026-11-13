@@ -39,5 +39,7 @@ String friendlyError(FirebaseFunctionsException e) {
   if (transportCodes.contains(e.code) && !hasRealMessage) {
     return "Couldn't reach the server. Check your connection and try again.";
   }
-  return message.isEmpty ? e.code : message;
+  // The SDK appends the numeric status to server messages ("Group 1 has 2 players. [400]"); drop it.
+  final clean = message.replaceFirst(RegExp(r'\s*\[\d+\]$'), '');
+  return clean.isEmpty ? e.code : clean;
 }

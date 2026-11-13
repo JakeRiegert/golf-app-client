@@ -19,6 +19,11 @@ void main() {
     expect(friendlyError(e), 'Course and holes cannot change once scores exist.');
   });
 
+  test('a trailing status number the SDK adds is dropped', () {
+    final e = FirebaseFunctionsException(code: 'failed-precondition', message: 'Group 1 has 2 players, more than 1. Move players first. [400]');
+    expect(friendlyError(e), 'Group 1 has 2 players, more than 1. Move players first.');
+  });
+
   test('a refusal with no text falls back to its code', () {
     expect(friendlyError(FirebaseFunctionsException(code: 'permission-denied', message: '')), 'permission-denied');
   });
