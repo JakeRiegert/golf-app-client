@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'date_field.dart';
 import 'dialog_utils.dart';
 import 'round_planning.dart';
+import 'scoring_helpers.dart';
 
 // The Rounds page of a tournament (debug harness): a live list of its rounds, each with its groups,
 // read from Firestore; every change goes through the createRound, updateRound and setGroups functions.
@@ -18,7 +19,7 @@ FirebaseFunctions get _functions => FirebaseFunctions.instanceFor(region: 'us-ce
 // Display names are read once per person and remembered, so a long group list does not re-read profiles.
 final Map<String, Future<String>> _names = {};
 
-Future<String> _nameOf(String uid) => _names.putIfAbsent(uid, () async {
+Future<String> playerNameOf(String uid) => _names.putIfAbsent(uid, () async {
   try {
     final snap = await FirebaseFirestore.instance.collection('players').doc(uid).get();
     final name = (snap.data()?['displayName'] as String?)?.trim();
@@ -100,7 +101,10 @@ class _RoundsSectionState extends State<RoundsSection> {
     await _call(context, 'createRound', {
       'tournamentId': widget.tournamentId,
       ...values.toPayload(),
-      if (values.useSampleCourse) 'course': sampleCourse(),
+      if (values.course != null)
+        'course': values.course
+      else if (values.useSampleCourse)
+        'course': sampleCourse(),
     }, done: 'Round added.');
     if (mounted) setState(() => _busy = false);
   }
@@ -226,8 +230,12 @@ class _RoundCardState extends State<_RoundCard> {
         'roundId': widget.roundId,
         ...values.toPayload(),
         // The sample course is only touched when the switch changed; a hand-entered course is left alone.
-        if (values.useSampleCourse && !_hasSampleCourse) 'course': sampleCourse(),
-        if (!values.useSampleCourse && _hasSampleCourse) 'course': null,
+        if (values.course != null)
+          'course': values.course
+        else if (values.useSampleCourse && !_hasSampleCourse)
+          'course': sampleCourse()
+        else if (!values.useSampleCourse && _hasSampleCourse)
+          'course': null,
       }, done: 'Round updated.');
     });
   }
@@ -486,7 +494,7 @@ class _GroupTile extends StatelessWidget {
               ].join(' · '),
             ),
             FutureBuilder<List<String>>(
-              future: Future.wait([for (final id in playerIds) _nameOf(id)]),
+              future: Future.wait([for (final id in playerIds) playerNameOf(id)]),
               builder: (context, snapshot) {
                 final names = snapshot.data;
                 if (names == null) return const Text('...');
@@ -510,6 +518,7 @@ class _RoundValues {
     required this.holesKey,
     required this.maxGroupSize,
     required this.useSampleCourse,
+    this.course,
   });
 
   // Empty means no name (the app then shows 'Round N'); sent as null, which also clears an old name.
@@ -518,6 +527,8 @@ class _RoundValues {
   final String holesKey;
   final int maxGroupSize;
   final bool useSampleCourse;
+  // A hand-entered course (name and pars), only when it is new or was changed; otherwise null.
+  final Map<String, Object?>? course;
 
   Map<String, Object?> toPayload() {
     final holes = HolesChoice.fromKey(holesKey);
@@ -550,7 +561,16 @@ class _RoundDialogState extends State<_RoundDialog> {
   );
   late int _size = (widget.initial?['maxGroupSize'] as num?)?.toInt() ?? 4;
   late bool _sample = widget.initial == null || ((widget.initial?['course'] as Map?)?['name'] == 'Sample Course');
+  late final _courseName = TextEditingController(text: _courseIsOther ? '${(widget.initial?['course'] as Map)['name']}' : '');
+  late final _pars = TextEditingController(text: _initialPars);
   String? _error;
+
+  // The pars of a hand-entered course being edited, as the text the box takes ("4 4 3 5 ...").
+  String get _initialPars {
+    if (!_courseIsOther) return '';
+    final holes = (widget.initial?['course'] as Map)['holes'] as List? ?? const [];
+    return [for (final h in holes) ((h as Map)['par'] as num).toInt()].join(' ');
+  }
 
   // A hand-entered course is not touched from here, so the switch is hidden for one.
   bool get _courseIsOther {
@@ -571,6 +591,8 @@ class _RoundDialogState extends State<_RoundDialog> {
   void dispose() {
     _name.dispose();
     _date.dispose();
+    _courseName.dispose();
+    _pars.dispose();
     super.dispose();
   }
 
@@ -579,6 +601,20 @@ class _RoundDialogState extends State<_RoundDialog> {
       setState(() => _error = 'Pick the date of the round');
       return;
     }
+    Map<String, Object?>? course;
+    final parsText = _pars.text.trim();
+    if (parsText.isNotEmpty) {
+      final parsed = parsePars(parsText);
+      if (parsed.error != null) {
+        setState(() => _error = parsed.error);
+        return;
+      }
+      // Only sent when it is new or changed: an unchanged course is left alone, since a course is frozen once a score exists.
+      final changed = !_courseIsOther ||
+          parsed.pars!.join(' ') != _initialPars ||
+          _courseName.text.trim() != '${(widget.initial?['course'] as Map)['name']}';
+      if (changed) course = courseFromPars(_courseName.text, parsed.pars!);
+    }
     popDialog(
       context,
       _RoundValues(
@@ -586,7 +622,8 @@ class _RoundDialogState extends State<_RoundDialog> {
         date: _date.text.trim(),
         holesKey: _holes,
         maxGroupSize: _size,
-        useSampleCourse: _sample && !_courseIsOther,
+        useSampleCourse: _sample && !_courseIsOther && parsText.isEmpty,
+        course: course,
       ),
     );
   }
@@ -635,6 +672,25 @@ class _RoundDialogState extends State<_RoundDialog> {
                   value: _sample,
                   onChanged: (v) => setState(() => _sample = v),
                 ),
+              const SizedBox(height: 8),
+              Text('Or enter your course', style: Theme.of(context).textTheme.titleSmall),
+              TextField(
+                controller: _courseName,
+                maxLength: 60,
+                decoration: const InputDecoration(labelText: 'Course name'),
+              ),
+              TextField(
+                controller: _pars,
+                keyboardType: TextInputType.multiline,
+                minLines: 2,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  labelText: 'Pars, hole 1 to 18',
+                  hintText: '4 4 3 5 4 4 3 5 4 4 4 3 5 4 4 3 5 4',
+                  helperText: 'Leave empty to keep the choice above. Sets the right maximum score on each hole.',
+                  helperMaxLines: 2,
+                ),
+              ),
               if (_error != null) Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
             ],
           ),

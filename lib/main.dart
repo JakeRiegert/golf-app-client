@@ -16,6 +16,15 @@ const bool useEmulators = bool.fromEnvironment('USE_EMULATORS');
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  if (!useEmulators) {
+    // Keep unsent scores on the device (IndexedDB on the web), so a score entered with no signal, or an app
+    // closed before it sent, still goes when the connection returns. Off against the emulators, where a stale
+    // cache from an earlier run would only confuse. Must be set before Firestore is first used.
+    FirebaseFirestore.instance.settings = const Settings(
+      persistenceEnabled: true,
+      webPersistentTabManager: WebPersistentMultipleTabManager(),
+    );
+  }
   if (useEmulators) {
     await FirebaseAuth.instance.useAuthEmulator('localhost', 9099);
     FirebaseFirestore.instance.useFirestoreEmulator('localhost', 8080);

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import 'players_section.dart';
 import 'rounds_section.dart';
+import 'score_section.dart';
 import 'teams_section.dart';
 import 'tournament_overview.dart';
 
@@ -40,16 +41,19 @@ class TournamentScreen extends StatelessWidget {
         final isAdmin = data['organizerId'] == uid || data['coAdminId'] == uid;
         final started = data['startedAt'] != null;
         return DefaultTabController(
-          length: 4,
+          length: 5,
           child: Scaffold(
             appBar: AppBar(
               title: Text('${data['name']}', overflow: TextOverflow.ellipsis),
               bottom: const TabBar(
+                isScrollable: true,
+                tabAlignment: TabAlignment.start,
                 tabs: [
                   Tab(text: 'Overview'),
                   Tab(text: 'Teams'),
                   Tab(text: 'Players'),
                   Tab(text: 'Rounds'),
+                  Tab(text: 'Score'),
                 ],
               ),
             ),
@@ -68,6 +72,7 @@ class TournamentScreen extends StatelessWidget {
                   ),
                 ),
                 _Page(child: RoundsSection(tournamentId: tournamentId, uid: uid, canEdit: isAdmin)),
+                _Page(child: ScoreSection(tournamentId: tournamentId, uid: uid, isAdmin: isAdmin)),
               ],
             ),
           ),
