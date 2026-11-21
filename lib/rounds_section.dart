@@ -661,7 +661,7 @@ class _RoundDialogState extends State<_RoundDialog> {
               DropdownButtonFormField<int>(
                 initialValue: _size,
                 decoration: const InputDecoration(labelText: 'Largest group'),
-                items: [for (var n = 1; n <= 8; n++) DropdownMenuItem(value: n, child: Text('$n players'))],
+                items: [for (var n = 1; n <= 8; n++) DropdownMenuItem(value: n, child: Text(n == 1 ? '1 player' : '$n players'))],
                 onChanged: (n) => setState(() => _size = n ?? 4),
               ),
               if (!_courseIsOther)

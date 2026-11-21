@@ -28,6 +28,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _saving = false;
   String? _status;
   String? _error;
+  String? _lastStoredName;
   int _tab = 0;
 
   HttpsCallable get _upsert =>
@@ -110,8 +111,13 @@ class _HomeScreenState extends State<HomeScreen> {
             if (data == null) {
               return const Text('Creating your profile...');
             }
-            if (!_nameFocus.hasFocus) {
-              _nameController.text = (data['displayName'] as String?) ?? '';
+            // Copy the stored name into the box only when it actually changed. Copying it on every update
+            // wiped a name that was typed but not yet saved: tapping Save moves focus off the box, and any
+            // profile update arriving in that moment (the first sign-in writes one) reset the box to the old name.
+            final stored = (data['displayName'] as String?) ?? '';
+            if (stored != _lastStoredName) {
+              _lastStoredName = stored;
+              if (!_nameFocus.hasFocus) _nameController.text = stored;
             }
             final meta = snapshot.data!.metadata;
             return Column(
@@ -162,7 +168,11 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
         const SizedBox(height: 24),
         OutlinedButton(
-          onPressed: () => FirebaseAuth.instance.signOut(),
+          onPressed: () {
+            // A leftover "Joined..." message should not follow you to the sign-in screen.
+            ScaffoldMessenger.maybeOf(context)?.clearSnackBars();
+            FirebaseAuth.instance.signOut();
+          },
           child: const Text('Sign out'),
         ),
         const SizedBox(height: 16),

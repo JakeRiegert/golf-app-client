@@ -241,6 +241,9 @@ class _RoundScoringState extends State<_RoundScoring> {
                       holes: holes,
                       hole: hole,
                       par: _parOf(hole),
+                      note: _maxMode == 'none'
+                          ? 'No maximum in this round: enter every real stroke.'
+                          : 'Most you can score here: ${_maxOf(hole)}. Pickup records exactly ${_maxOf(hole)}.',
                       done: {for (final h in holes) h: groupIds.every((p) => latest[p]?[h] != null)},
                       onPick: (h) => setState(() => _hole = h),
                     ),
@@ -326,11 +329,12 @@ class _SubState {
 
 // The hole picker: the current hole, its par, and a chip per hole (ticked once everyone in the group has one).
 class _HoleBar extends StatelessWidget {
-  const _HoleBar({required this.holes, required this.hole, required this.par, required this.done, required this.onPick});
+  const _HoleBar({required this.holes, required this.hole, required this.par, required this.note, required this.done, required this.onPick});
 
   final List<int> holes;
   final int hole;
   final int par;
+  final String note;
   final Map<int, bool> done;
   final ValueChanged<int> onPick;
 
@@ -341,6 +345,7 @@ class _HoleBar extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text('Hole $hole · Par $par', style: theme.textTheme.titleLarge),
+        Text(note, style: theme.textTheme.bodySmall),
         const SizedBox(height: 8),
         Wrap(
           spacing: 6,
