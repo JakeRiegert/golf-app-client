@@ -5,9 +5,13 @@ import 'package:flutter/material.dart';
 import 'dialog_utils.dart';
 import 'rounds_section.dart' show playerNameOf;
 
-// Tees and check-in for one round, shown on the round card. Everyone sees who has checked in and which tee each player
-// plays; a player picks their own tee (men's or women's rating table) and checks in; an organizer or co-admin can set any
-// player's tee ahead of time (setting a tee is not checking in), check people in, and set a tee for everyone at once.
+// Tees and check-in for one round. Check-in is only a way for the organizer to see who has turned up and which tee each
+// player plays: it never holds up a round, scoring or a tournament. Everyone sees the count; a player picks their own
+// tee (men's or women's rating table) and checks in; an organizer or co-admin can do all of that for anyone, ahead of
+// time or afterwards (a player who hands in a card and leaves the rest to them), and sets tees for everyone at once.
+// Setting a tee is not checking in. On the round card an organizer sees a compact block with a Manage button that opens
+// the full check-in page (CheckInPage); players see the whole list on the card. A check-in an organizer did for a
+// player is shown in a different colour from one the player did themselves.
 // Reads come from Firestore (rounds/{id}/roundPlayers); every change goes through the setRoundPlayers function.
 
 FirebaseFunctions get _functions => FirebaseFunctions.instanceFor(region: 'us-central1');
@@ -19,6 +23,48 @@ class _Pick {
   final bool checkedIn;
 }
 
+// Colours: green = the player checked in themselves, blue = an organizer did it for them.
+Color _selfColor() => Colors.green.shade700;
+Color _organizerColor() => Colors.blue.shade700;
+
+// The organizer's full check-in page for one round: who is in, who is not, one tap to check someone in.
+class CheckInPage extends StatelessWidget {
+  const CheckInPage({super.key, required this.tournamentId, required this.roundId, required this.uid});
+
+  final String tournamentId;
+  final String roundId;
+  final String uid;
+
+  @override
+  Widget build(BuildContext context) {
+    final roundRef = FirebaseFirestore.instance.collection('tournaments').doc(tournamentId).collection('rounds').doc(roundId);
+    return Scaffold(
+      appBar: AppBar(title: const Text('Check-in')),
+      body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+        stream: roundRef.snapshots(),
+        builder: (context, snap) {
+          final round = snap.data?.data();
+          if (snap.hasError) return Center(child: Text('${snap.error}'));
+          if (round == null) return const Center(child: CircularProgressIndicator());
+          return ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              CheckInPanel(
+                tournamentId: tournamentId,
+                roundId: roundId,
+                round: round,
+                uid: uid,
+                canEdit: true,
+                fullPage: true,
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
 class CheckInPanel extends StatelessWidget {
   const CheckInPanel({
     super.key,
@@ -27,6 +73,7 @@ class CheckInPanel extends StatelessWidget {
     required this.round,
     required this.uid,
     required this.canEdit,
+    this.fullPage = false,
   });
 
   final String tournamentId;
@@ -34,6 +81,7 @@ class CheckInPanel extends StatelessWidget {
   final Map<String, dynamic> round;
   final String uid;
   final bool canEdit;
+  final bool fullPage;
 
   DocumentReference<Map<String, dynamic>> get _tournament =>
       FirebaseFirestore.instance.collection('tournaments').doc(tournamentId);
@@ -67,17 +115,26 @@ class CheckInPanel extends StatelessWidget {
     return 'unknown tee';
   }
 
-  String _statusLine(Map<String, dynamic>? pick) {
+  // Checked in by someone other than the player: an organizer did it for them.
+  static bool byOrganizer(String playerId, Map<String, dynamic>? pick) {
+    final by = pick?['checkedInBy'] as String?;
+    return pick?['checkedIn'] == true && by != null && by != playerId;
+  }
+
+  String _statusLine(String playerId, Map<String, dynamic>? pick) {
+    final checked = pick?['checkedIn'] == true;
+    final head = !checked ? 'Not checked in' : (byOrganizer(playerId, pick) ? 'Checked in by organizer' : 'Checked in');
+    if (_tees.isEmpty) return head;
     final tee = pick?['teeId'] as String?;
     final table = pick?['table'] as String?;
-    if (_tees.isEmpty) return pick?['checkedIn'] == true ? 'Checked in' : 'Not checked in';
     final plays = tee == null
         ? 'No tee chosen yet'
         : '${_teeName(tee)} tees${table == null ? '' : ", ${table == 'women' ? "women's" : "men's"} rating"}';
-    return '${pick?['checkedIn'] == true ? 'Checked in' : 'Not checked in'} · $plays';
+    // A tee an organizer set ahead of time, before the player has checked in.
+    return '$head · ${!checked && tee != null ? 'Pre-set: $plays' : plays}';
   }
 
-  Future<void> _send(BuildContext context, List<Map<String, Object?>> players, String done) async {
+  Future<bool> _send(BuildContext context, List<Map<String, Object?>> players, String done) async {
     try {
       await _functions.httpsCallable('setRoundPlayers').call({
         'tournamentId': tournamentId,
@@ -89,13 +146,17 @@ class CheckInPanel extends StatelessWidget {
           ?..hideCurrentSnackBar()
           ..showSnackBar(SnackBar(content: Text(done), backgroundColor: Colors.green.shade700));
       }
+      return true;
     } on FirebaseFunctionsException catch (e) {
       if (context.mounted) showErrorMessage(context, friendlyError(e));
+      return false;
     }
   }
 
-  // Edit one player's tee, rating table and check-in. [self] is the signed-in player editing their own entry.
-  Future<void> _editPlayer(BuildContext context, String playerId, String name, Map<String, dynamic>? pick, {required bool self}) async {
+  // Edit one player's tee, rating table and check-in. [self] is the signed-in player editing their own entry on the
+  // round card; the organizer's page edits everyone, themselves included, with the "checked in" switch.
+  Future<void> _editPlayer(BuildContext context, String playerId, Map<String, dynamic>? pick,
+      {required bool self, bool startCheckedIn = false}) async {
     final tees = _tees;
     if (tees.isEmpty) {
       // No tee sets on this course: checking in is the only thing to do.
@@ -104,15 +165,18 @@ class CheckInPanel extends StatelessWidget {
       ], pick?['checkedIn'] == true ? 'Check-in removed.' : 'Checked in.');
       return;
     }
+    final name = self ? 'Check in' : await playerNameOf(playerId);
+    if (!context.mounted) return;
     final result = await showDialog<_Pick>(
       context: context,
       builder: (_) => _TeeDialog(
-        title: self ? 'Check in' : name,
+        title: name,
         tees: tees,
         labelOf: _teeLabel,
-        initialTeeId: (pick?['teeId'] as String?) ?? (self ? _defaultTeeId : null),
+        initialTeeId: (pick?['teeId'] as String?) ?? (self || startCheckedIn ? _defaultTeeId : null),
         initialTable: pick?['table'] as String?,
-        initialCheckedIn: pick?['checkedIn'] == true,
+        initialCheckedIn: pick?['checkedIn'] == true || startCheckedIn,
+        wasCheckedIn: pick?['checkedIn'] == true,
         self: self,
       ),
     );
@@ -125,6 +189,24 @@ class CheckInPanel extends StatelessWidget {
         'checkedIn': result.checkedIn,
       },
     ], result.checkedIn ? 'Checked in.' : 'Saved.');
+  }
+
+  // One tap for the organizer: check the player in with what is already set. Needs the rating table (a visible choice),
+  // so with none set the dialog opens instead, ready to check in.
+  Future<void> _quickCheckIn(BuildContext context, String playerId, Map<String, dynamic>? pick) async {
+    if (_tees.isEmpty || pick?['table'] != null) {
+      await _send(context, [
+        {'playerId': playerId, 'checkedIn': true},
+      ], 'Checked in.');
+      return;
+    }
+    await _editPlayer(context, playerId, pick, self: false, startCheckedIn: true);
+  }
+
+  Future<void> _undo(BuildContext context, String playerId) async {
+    await _send(context, [
+      {'playerId': playerId, 'checkedIn': false},
+    ], 'Check-in removed.');
   }
 
   Future<void> _setEveryone(BuildContext context, List<QueryDocumentSnapshot<Map<String, dynamic>>> roster, Map<String, Map<String, dynamic>> picks) async {
@@ -157,6 +239,18 @@ class CheckInPanel extends StatelessWidget {
     }
   }
 
+  PlayerLine _line(BuildContext context, String playerId, Map<String, dynamic>? pick, {required bool manage}) {
+    return PlayerLine(
+      playerId: playerId,
+      checked: pick?['checkedIn'] == true,
+      byOrganizer: byOrganizer(playerId, pick),
+      status: _statusLine(playerId, pick),
+      onCheckIn: manage && canEdit && pick?['checkedIn'] != true ? () => _quickCheckIn(context, playerId, pick) : null,
+      onUndo: manage && canEdit && pick?['checkedIn'] == true ? () => _undo(context, playerId) : null,
+      onEdit: canEdit ? () => _editPlayer(context, playerId, pick, self: false) : null,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -178,6 +272,8 @@ class CheckInPanel extends StatelessWidget {
             final checkedIn = roster.where((d) => picks[d.id]?['checkedIn'] == true).length;
             final mine = picks[uid];
             final onRoster = roster.any((d) => d.id == uid);
+            final waiting = [for (final d in roster) if (picks[d.id]?['checkedIn'] != true) d];
+            final done = [for (final d in roster) if (picks[d.id]?['checkedIn'] == true) d];
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -185,26 +281,53 @@ class CheckInPanel extends StatelessWidget {
                   children: [
                     Expanded(
                       child: Text(
-                        'Check-in ($checkedIn of ${roster.length})',
-                        style: theme.textTheme.titleSmall,
+                        fullPage ? '$checkedIn of ${roster.length} checked in' : 'Check-in ($checkedIn of ${roster.length})',
+                        style: fullPage ? theme.textTheme.titleMedium : theme.textTheme.titleSmall,
                       ),
                     ),
-                    if (canEdit && _tees.isNotEmpty)
+                    if (canEdit && !fullPage)
+                      TextButton(
+                        onPressed: () => Navigator.of(context).push<void>(
+                          MaterialPageRoute(
+                            builder: (_) => CheckInPage(tournamentId: tournamentId, roundId: roundId, uid: uid),
+                          ),
+                        ),
+                        child: const Text('Manage'),
+                      ),
+                    if (canEdit && fullPage && _tees.isNotEmpty)
                       TextButton(
                         onPressed: () => _setEveryone(context, roster, picks),
                         child: const Text("Set everyone's tee"),
                       ),
                   ],
                 ),
-                if (onRoster)
+                if (fullPage) ...[
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text(
+                      'This is only so you can see what is going on. Nobody is ever held up for not being checked in, '
+                      'and scores count either way.',
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ),
+                  Wrap(
+                    spacing: 16,
+                    children: [
+                      _LegendDot(icon: Icons.check_circle, color: _selfColor(), label: 'Checked in themselves'),
+                      _LegendDot(icon: Icons.how_to_reg, color: _organizerColor(), label: 'Checked in by organizer'),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                ],
+                if (!fullPage && onRoster)
                   Card(
                     color: theme.colorScheme.secondaryContainer,
                     margin: const EdgeInsets.symmetric(vertical: 4),
                     child: ListTile(
                       title: const Text('You'),
-                      subtitle: Text(_statusLine(mine)),
+                      subtitle: Text(_statusLine(uid, mine)),
                       trailing: FilledButton(
-                        onPressed: () => _editPlayer(context, uid, 'You', mine, self: true),
+                        onPressed: () => _editPlayer(context, uid, mine, self: true),
                         child: Text(mine?['checkedIn'] == true ? 'Change' : 'Check in'),
                       ),
                     ),
@@ -217,14 +340,25 @@ class CheckInPanel extends StatelessWidget {
                       style: theme.textTheme.bodySmall,
                     ),
                   ),
-                for (final doc in roster)
-                  if (doc.id != uid)
-                    _PlayerLine(
-                      playerId: doc.id,
-                      pick: picks[doc.id],
-                      status: _statusLine(picks[doc.id]),
-                      onEdit: canEdit ? () => _editPlayer(context, doc.id, '', picks[doc.id], self: false) : null,
+                if (fullPage) ...[
+                  if (waiting.isNotEmpty) ...[
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text('Not checked in (${waiting.length})', style: theme.textTheme.titleSmall),
                     ),
+                    for (final doc in waiting) _line(context, doc.id, picks[doc.id], manage: true),
+                  ],
+                  if (done.isNotEmpty) ...[
+                    Padding(
+                      padding: const EdgeInsets.only(top: 16),
+                      child: Text('Checked in (${done.length})', style: theme.textTheme.titleSmall),
+                    ),
+                    for (final doc in done) _line(context, doc.id, picks[doc.id], manage: true),
+                  ],
+                ] else if (!canEdit) ...[
+                  for (final doc in roster)
+                    if (doc.id != uid) _line(context, doc.id, picks[doc.id], manage: false),
+                ],
               ],
             );
           },
@@ -234,26 +368,70 @@ class CheckInPanel extends StatelessWidget {
   }
 }
 
-class _PlayerLine extends StatelessWidget {
-  const _PlayerLine({required this.playerId, required this.pick, required this.status, required this.onEdit});
+class _LegendDot extends StatelessWidget {
+  const _LegendDot({required this.icon, required this.color, required this.label});
+
+  final IconData icon;
+  final Color color;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, color: color, size: 18),
+        const SizedBox(width: 4),
+        Text(label, style: Theme.of(context).textTheme.bodySmall),
+      ],
+    );
+  }
+}
+
+// One player's line. Visible only for display and for the organizer's one-tap actions; players never get buttons here.
+class PlayerLine extends StatelessWidget {
+  const PlayerLine({
+    super.key,
+    required this.playerId,
+    required this.checked,
+    required this.byOrganizer,
+    required this.status,
+    this.onCheckIn,
+    this.onUndo,
+    this.onEdit,
+  });
 
   final String playerId;
-  final Map<String, dynamic>? pick;
+  final bool checked;
+  final bool byOrganizer;
   final String status;
+  final VoidCallback? onCheckIn;
+  final VoidCallback? onUndo;
   final VoidCallback? onEdit;
 
   @override
   Widget build(BuildContext context) {
-    final checked = pick?['checkedIn'] == true;
+    final Widget icon = !checked
+        ? const Icon(Icons.radio_button_unchecked)
+        : byOrganizer
+            ? Icon(Icons.how_to_reg, color: _organizerColor())
+            : Icon(Icons.check_circle, color: _selfColor());
     return FutureBuilder<String>(
       future: playerNameOf(playerId),
       builder: (context, snap) => ListTile(
         dense: true,
         contentPadding: EdgeInsets.zero,
-        leading: Icon(checked ? Icons.check_circle : Icons.radio_button_unchecked, color: checked ? Colors.green.shade700 : null),
+        leading: icon,
         title: Text(snap.data ?? '...'),
         subtitle: Text(status),
-        trailing: onEdit == null ? null : IconButton(tooltip: 'Set tee or check in', icon: const Icon(Icons.edit_outlined), onPressed: onEdit),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (onCheckIn != null) FilledButton.tonal(onPressed: onCheckIn, child: const Text('Check in')),
+            if (onUndo != null) TextButton(onPressed: onUndo, child: const Text('Undo')),
+            if (onEdit != null) IconButton(tooltip: 'Set tee or check in', icon: const Icon(Icons.edit_outlined), onPressed: onEdit),
+          ],
+        ),
       ),
     );
   }
@@ -269,6 +447,7 @@ class _TeeDialog extends StatefulWidget {
     required this.initialTeeId,
     required this.initialTable,
     required this.initialCheckedIn,
+    required this.wasCheckedIn,
     required this.self,
   });
 
@@ -278,6 +457,7 @@ class _TeeDialog extends StatefulWidget {
   final String? initialTeeId;
   final String? initialTable;
   final bool initialCheckedIn;
+  final bool wasCheckedIn;
   final bool self;
 
   @override
@@ -362,7 +542,7 @@ class _TeeDialogState extends State<_TeeDialog> {
         ),
       ),
       actions: [
-        if (widget.self && widget.initialCheckedIn)
+        if (widget.self && widget.wasCheckedIn)
           TextButton(
             onPressed: () => popDialog(context, _Pick(teeId: _tee, table: _table, checkedIn: false)),
             child: const Text('Undo check-in'),
@@ -372,7 +552,7 @@ class _TeeDialogState extends State<_TeeDialog> {
           onPressed: widget.self
               ? (canCheckIn ? () => popDialog(context, _Pick(teeId: _tee, table: _table, checkedIn: true)) : null)
               : (_checkedIn && !canCheckIn ? null : () => popDialog(context, _Pick(teeId: _tee, table: _table, checkedIn: _checkedIn))),
-          child: Text(widget.self ? (widget.initialCheckedIn ? 'Save' : 'Check in') : 'Save'),
+          child: Text(widget.self ? (widget.wasCheckedIn ? 'Save' : 'Check in') : 'Save'),
         ),
       ],
     );

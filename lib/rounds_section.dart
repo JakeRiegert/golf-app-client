@@ -474,7 +474,8 @@ class _RoundCardState extends State<_RoundCard> {
                 ],
               ),
             const Divider(height: 24),
-            if (status == 'scheduled' || status == 'live') ...[
+            // Players can check in while the round is scheduled or live; an organizer can still fill it in afterwards.
+            if (status == 'scheduled' || status == 'live' || (widget.canEdit && status != 'cancelled')) ...[
               CheckInPanel(
                 tournamentId: widget.tournamentId,
                 roundId: widget.roundId,
