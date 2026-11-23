@@ -14,9 +14,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Pinned to the version we develop and test with, so CI and local runs agree (an unpinned "stable" moves under
+      # us). Raise it deliberately, with a local `flutter upgrade`, analyze and test, in the same commit.
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: '3.47.5'
 
       - name: Install dependencies
         run: flutter pub get

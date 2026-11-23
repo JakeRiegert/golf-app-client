@@ -64,9 +64,11 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
+      # Same pinned version as ci.yml: what we tested is what we ship.
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: '3.47.5'
 
       - name: Build the web app
         run: |
