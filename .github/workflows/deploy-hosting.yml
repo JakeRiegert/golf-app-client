@@ -1,0 +1,97 @@
+name: Deploy to Firebase Hosting
+
+# "Push" means deploy: a push to main runs CI (analyze + tests); when CI passes, this workflow builds the web app and
+# releases it to Firebase Hosting. It can also be run by hand. Pull requests and other branches never deploy.
+#
+# The site calls functions in golf-app-backend, so it must never go live before they do. The first step waits until the
+# backend repo's `deployed-gcp` tag (moved only after a deploy, post-deploy checks and smoke test all pass) equals the
+# backend's main, and fails fast if the backend's CI failed for that commit. Push the backend first when both change.
+# (The backend repo is public, so these reads need no special access.)
+#
+# Authentication is Workload Identity Federation, no stored key. One-time setup: golf-app-backend/ops/setup-wif.ps1
+# trusts this repository by its numeric ID. Repository variables (Settings > Secrets and variables > Actions >
+# Variables), the same three as in the backend: GCP_PROJECT_ID, WIF_PROVIDER, WIF_SERVICE_ACCOUNT. Until they exist
+# the job is skipped.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+
+concurrency:
+  group: deploy-hosting
+  cancel-in-progress: false
+
+env:
+  BACKEND: JakeRiegert/golf-app-backend
+
+jobs:
+  deploy:
+    if: >-
+      ${{ vars.WIF_PROVIDER != '' && vars.WIF_SERVICE_ACCOUNT != '' && vars.GCP_PROJECT_ID != '' &&
+      (github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Wait for the backend to be live
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          api() { curl -fsS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$BACKEND/$1"; }
+          for i in $(seq 1 60); do   # up to 30 minutes
+            HEAD_SHA=$(api commits/main | jq -r .sha)
+            LIVE_SHA=$(api git/ref/tags/deployed-gcp 2>/dev/null | jq -r '.object.sha // empty' || true)
+            if [ "$HEAD_SHA" = "$LIVE_SHA" ]; then
+              echo "Backend is live at $HEAD_SHA."; exit 0
+            fi
+            FAILED=$(api "actions/runs?head_sha=$HEAD_SHA&status=failure" | jq -r '.total_count')
+            if [ "$FAILED" != "0" ]; then
+              echo "::error::A backend workflow failed for $HEAD_SHA, so the backend is not live. Fix it first."; exit 1
+            fi
+            echo "Waiting: backend main is $HEAD_SHA, live is ${LIVE_SHA:-none} ($i/60)"
+            sleep 30
+          done
+          echo "::error::Timed out waiting for the backend deploy of $HEAD_SHA."; exit 1
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Build the web app
+        run: |
+          flutter pub get
+          flutter build web --release
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.WIF_SERVICE_ACCOUNT }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Release to Firebase Hosting
+        env:
+          PROJECT: ${{ vars.GCP_PROJECT_ID }}
+        run: npx --yes firebase-tools@15 deploy --only hosting --project "$PROJECT" --non-interactive
+
+      - name: Check the live site answers
+        run: |
+          for i in 1 2 3 4 5; do
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' "https://${{ vars.GCP_PROJECT_ID }}.web.app/")
+            [ "$CODE" = "200" ] && echo "Site is up (200)." && exit 0
+            sleep 10
+          done
+          echo "::error::The live site did not return 200 (last: $CODE)."; exit 1
