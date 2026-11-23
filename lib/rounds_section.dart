@@ -4,10 +4,12 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 
+import 'checkin_panel.dart';
+import 'course_model.dart';
+import 'course_page.dart';
 import 'date_field.dart';
 import 'dialog_utils.dart';
 import 'round_planning.dart';
-import 'scoring_helpers.dart';
 
 // The Rounds page of a tournament (debug harness): a live list of its rounds, each with its groups,
 // read from Firestore; every change goes through the createRound, updateRound and setGroups functions.
@@ -140,10 +142,6 @@ class _RoundsSectionState extends State<RoundsSection> {
     await _call(context, 'createRound', {
       'tournamentId': widget.tournamentId,
       ...values.toPayload(),
-      if (values.course != null)
-        'course': values.course
-      else if (values.useSampleCourse)
-        'course': sampleCourse(),
     }, done: 'Round added.');
     if (mounted) setState(() => _busy = false);
   }
@@ -255,10 +253,9 @@ class _RoundCardState extends State<_RoundCard> {
   DocumentReference<Map<String, dynamic>> get _round =>
       _tournament.collection('rounds').doc(widget.roundId);
 
-  Map<String, dynamic> get _course =>
-      Map<String, dynamic>.from((widget.data['course'] as Map?) ?? {});
-  bool get _hasCourse => widget.data['course'] != null;
-  bool get _hasSampleCourse => _course['name'] == 'Sample Course';
+  Map<String, dynamic>? get _course => widget.data['course'] == null
+      ? null
+      : Map<String, dynamic>.from(widget.data['course'] as Map);
   int get _maxGroupSize => (widget.data['maxGroupSize'] as num?)?.toInt() ?? 4;
   int get _firstHole => (widget.data['firstHole'] as num?)?.toInt() ?? 1;
   int get _holesPlanned => (widget.data['holesPlanned'] as num?)?.toInt() ?? 18;
@@ -281,14 +278,8 @@ class _RoundCardState extends State<_RoundCard> {
       await _call(context, 'updateRound', {
         'tournamentId': widget.tournamentId,
         'roundId': widget.roundId,
+        // The course is included only when it was entered, edited or removed on the page.
         ...values.toPayload(),
-        // The sample course is only touched when the switch changed; a hand-entered course is left alone.
-        if (values.course != null)
-          'course': values.course
-        else if (values.useSampleCourse && !_hasSampleCourse)
-          'course': sampleCourse()
-        else if (!values.useSampleCourse && _hasSampleCourse)
-          'course': null,
       }, done: 'Round updated.');
     });
   }
@@ -311,8 +302,9 @@ class _RoundCardState extends State<_RoundCard> {
           if (doc.data()['withdrawn'] != true) doc.id,
       ];
       if (ids.isEmpty) {
-        if (mounted)
+        if (mounted) {
           showErrorMessage(context, 'There is nobody on the roster yet.');
+        }
         return;
       }
       if (randomize) ids.shuffle(Random());
@@ -433,17 +425,9 @@ class _RoundCardState extends State<_RoundCard> {
     });
   }
 
-  String _courseText() {
-    if (!_hasCourse) return 'No course yet';
-    final all = (_course['holes'] as List?) ?? const [];
-    // Only the holes this round plays: the course may list 18 while the round is a front or back nine.
-    final from = (_firstHole - 1).clamp(0, all.length);
-    final to = (_firstHole - 1 + _holesPlanned).clamp(from, all.length);
-    final par = all
-        .sublist(from, to)
-        .fold<int>(0, (total, h) => total + ((h as Map)['par'] as num).toInt());
-    return '${_course['name']} (par $par)';
-  }
+  // Only the holes this round plays count towards par: the course may list 18 while the round is a front or back nine.
+  String _courseText() =>
+      courseLine(_course, firstHole: _firstHole, holesPlanned: _holesPlanned);
 
   @override
   Widget build(BuildContext context) {
@@ -490,6 +474,16 @@ class _RoundCardState extends State<_RoundCard> {
                 ],
               ),
             const Divider(height: 24),
+            if (status == 'scheduled' || status == 'live') ...[
+              CheckInPanel(
+                tournamentId: widget.tournamentId,
+                roundId: widget.roundId,
+                round: widget.data,
+                uid: widget.uid,
+                canEdit: widget.canEdit,
+              ),
+              const Divider(height: 24),
+            ],
             StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
               stream: _round.collection('groups').orderBy('order').snapshots(),
               builder: (context, snapshot) {
@@ -663,14 +657,14 @@ class _GroupTile extends StatelessWidget {
   }
 }
 
-// What the add-round and round-settings dialog hands back.
+// What the add-round and round-settings page hands back.
 class _RoundValues {
   const _RoundValues({
     required this.name,
     required this.date,
     required this.holesKey,
     required this.maxGroupSize,
-    required this.useSampleCourse,
+    required this.courseChanged,
     this.course,
   });
 
@@ -679,8 +673,9 @@ class _RoundValues {
   final String date;
   final String holesKey;
   final int maxGroupSize;
-  final bool useSampleCourse;
-  // A hand-entered course (name and pars), only when it is new or was changed; otherwise null.
+  // True when the course was entered, edited or cleared here; an untouched course is left alone (it is frozen once a
+  // score exists). [course] is then the new course, or null to clear it.
+  final bool courseChanged;
   final Map<String, Object?>? course;
 
   Map<String, Object?> toPayload() {
@@ -691,6 +686,7 @@ class _RoundValues {
       'holesPlanned': holes.holesPlanned,
       'firstHole': holes.firstHole,
       'maxGroupSize': maxGroupSize,
+      if (courseChanged) 'course': course,
     };
   }
 }
@@ -717,37 +713,22 @@ class _RoundDialogState extends State<_RoundDialog> {
     (widget.initial?['firstHole'] as num?)?.toInt() ?? 1,
   );
   late int _size = (widget.initial?['maxGroupSize'] as num?)?.toInt() ?? 4;
-  late bool _sample =
-      widget.initial == null ||
-      ((widget.initial?['course'] as Map?)?['name'] == 'Sample Course');
-  late final _courseName = TextEditingController(
-    text: _courseIsOther ? '${(widget.initial?['course'] as Map)['name']}' : '',
-  );
-  late final _pars = TextEditingController(text: _initialPars);
+  // The course: a new round starts on the made-up sample course (so a round can be tried without typing a course);
+  // an existing round keeps its own until it is changed here.
+  late Map? _course = widget.initial == null
+      ? sampleCourse()
+      : widget.initial?['course'] as Map?;
+  late bool _courseChanged = widget.initial == null;
   String? _error;
-
-  // The pars of a hand-entered course being edited, as the text the box takes ("4 4 3 5 ...").
-  String get _initialPars {
-    if (!_courseIsOther) return '';
-    final holes =
-        (widget.initial?['course'] as Map)['holes'] as List? ?? const [];
-    return [for (final h in holes) ((h as Map)['par'] as num).toInt()]
-        .join(' ');
-  }
-
-  // A hand-entered course is not touched from here, so the switch is hidden for one.
-  bool get _courseIsOther {
-    final course = widget.initial?['course'] as Map?;
-    return course != null && course['name'] != 'Sample Course';
-  }
 
   @override
   void initState() {
     super.initState();
     // The message about a missing date goes away as soon as a date is picked.
     _date.addListener(() {
-      if (_error != null && DateField.parse(_date.text) != null)
+      if (_error != null && DateField.parse(_date.text) != null) {
         setState(() => _error = null);
+      }
     });
   }
 
@@ -755,31 +736,24 @@ class _RoundDialogState extends State<_RoundDialog> {
   void dispose() {
     _name.dispose();
     _date.dispose();
-    _courseName.dispose();
-    _pars.dispose();
     super.dispose();
+  }
+
+  Future<void> _editCourse() async {
+    final result = await Navigator.of(context).push<Map<String, Object?>>(
+      MaterialPageRoute(builder: (_) => CoursePage(initial: _course)),
+    );
+    if (result == null || !mounted) return;
+    setState(() {
+      _course = result;
+      _courseChanged = true;
+    });
   }
 
   void _save() {
     if (DateField.parse(_date.text) == null) {
       setState(() => _error = 'Pick the date of the round');
       return;
-    }
-    Map<String, Object?>? course;
-    final parsText = _pars.text.trim();
-    if (parsText.isNotEmpty) {
-      final parsed = parsePars(parsText);
-      if (parsed.error != null) {
-        setState(() => _error = parsed.error);
-        return;
-      }
-      // Only sent when it is new or changed: an unchanged course is left alone, since a course is frozen once a score exists.
-      final changed =
-          !_courseIsOther ||
-          parsed.pars!.join(' ') != _initialPars ||
-          _courseName.text.trim() !=
-              '${(widget.initial?['course'] as Map)['name']}';
-      if (changed) course = courseFromPars(_courseName.text, parsed.pars!);
     }
     popDialog(
       context,
@@ -788,18 +762,20 @@ class _RoundDialogState extends State<_RoundDialog> {
         date: _date.text.trim(),
         holesKey: _holes,
         maxGroupSize: _size,
-        useSampleCourse: _sample && !_courseIsOther && parsText.isEmpty,
-        course: course,
+        courseChanged: _courseChanged,
+        course: _course == null ? null : Map<String, Object?>.from(_course!),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final saveLabel = widget.initial == null ? 'Add round' : 'Save';
-    // A full page, not a dialog: on a phone the keyboard left a dialog almost no room, and the course
-    // fields at its bottom could not be reached. The Save action also sits in the app bar so it is
-    // always on screen, even with the keyboard open.
+    final holes = HolesChoice.fromKey(_holes);
+    final isSample = _course?['name'] == 'Sample Course';
+    // A full page, not a dialog: on a phone the keyboard left a dialog almost no room. The Save action also sits
+    // in the app bar so it is always on screen, even with the keyboard open. The course has its own page.
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
@@ -825,9 +801,7 @@ class _RoundDialogState extends State<_RoundDialog> {
                     padding: const EdgeInsets.only(bottom: 12),
                     child: Text(
                       _error!,
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.error,
-                      ),
+                      style: TextStyle(color: theme.colorScheme.error),
                     ),
                   ),
                 TextField(
@@ -864,43 +838,41 @@ class _RoundDialogState extends State<_RoundDialog> {
                   ],
                   onChanged: (n) => setState(() => _size = n ?? 4),
                 ),
-                if (!_courseIsOther)
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('Use the sample course'),
-                    subtitle: const Text(
-                      'A made-up par-72 course, for testing',
-                    ),
-                    value: _sample,
-                    onChanged: (v) => setState(() => _sample = v),
-                  ),
                 const SizedBox(height: 24),
-                Text(
-                  'Or enter your course',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                TextField(
-                  controller: _courseName,
-                  maxLength: 60,
-                  decoration: const InputDecoration(labelText: 'Course name'),
-                ),
-                TextField(
-                  controller: _pars,
-                  keyboardType: TextInputType.multiline,
-                  minLines: 2,
-                  maxLines: 3,
-                  decoration: const InputDecoration(
-                    labelText: 'Pars, hole 1 to 18',
-                    hintText: '4 4 3 5 4 4 3 5 4 4 4 3 5 4 4 3 5 4',
-                    helperText: 'Leave empty to keep the choice above. Sets the right maximum score on each hole.',
-                    helperMaxLines: 2,
+                Text('Course', style: theme.textTheme.titleMedium),
+                const SizedBox(height: 4),
+                Card(
+                  margin: EdgeInsets.zero,
+                  child: ListTile(
+                    title: Text(
+                      courseLine(
+                        _course,
+                        firstHole: holes.firstHole,
+                        holesPlanned: holes.holesPlanned,
+                      ),
+                    ),
+                    subtitle: Text(
+                      _course == null
+                          ? 'Enter the holes, tees and ratings on the course page.'
+                          : isSample
+                          ? 'A made-up course for testing. Enter your own to play a real course.'
+                          : 'Pars, hole rankings, tees and yardage.',
+                    ),
+                    trailing: FilledButton.tonal(
+                      onPressed: _editCourse,
+                      child: Text(_course == null ? 'Enter' : 'Edit'),
+                    ),
                   ),
                 ),
-                if (_error != null)
-                  Text(
-                    _error!,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
+                if (_course != null)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton(
+                      onPressed: () => setState(() {
+                        _course = null;
+                        _courseChanged = true;
+                      }),
+                      child: const Text('Remove the course'),
                     ),
                   ),
                 const SizedBox(height: 16),

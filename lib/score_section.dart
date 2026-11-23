@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
@@ -118,6 +120,40 @@ class _RoundScoringState extends State<_RoundScoring> {
   String? _groupId;
   int? _hole;
   final Map<String, int> _draft = {}; // '$playerId|$hole' -> the number being stepped to, before Save
+
+  // Each player's tee pick for this round (rounds/{id}/roundPlayers), for the yardage shown on their card.
+  Map<String, Map<String, dynamic>> _picks = {};
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _picksSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _picksSub = _round.collection('roundPlayers').snapshots().listen(
+      (snap) {
+        if (mounted) setState(() => _picks = {for (final d in snap.docs) d.id: d.data()});
+      },
+      // The yardage line is a nicety: if the picks cannot be read, the card simply shows no tee.
+      onError: (Object _) {},
+    );
+  }
+
+  @override
+  void dispose() {
+    _picksSub?.cancel();
+    super.dispose();
+  }
+
+  // "Blue tees · 168 yds" for this player on this hole, or null when the course has no tees. A player who has not picked
+  // plays the round's default tee until they do.
+  String? _teeNote(String playerId, int hole) {
+    final tees = (widget.round['course'] as Map?)?['tees'];
+    if (tees is! List || tees.isEmpty) return null;
+    final teeId = (_picks[playerId]?['teeId'] as String?) ?? (widget.round['defaultTeeId'] as String?);
+    final tee = tees.cast<Map>().where((t) => t['id'] == teeId).firstOrNull;
+    if (tee == null) return null;
+    final yards = (tee['yards'] as List?)?.elementAtOrNull(hole - 1) as num?;
+    return '${tee['name']} tees${yards == null ? '' : ' · ${yards.toInt()} yds'}';
+  }
 
   // The round's own data, read from the document that was handed in (it updates with the round stream above).
   int get _firstHole => (widget.round['firstHole'] as num?)?.toInt() ?? 1;
@@ -253,6 +289,7 @@ class _RoundScoringState extends State<_RoundScoring> {
                         key: ValueKey('$playerId|$hole'),
                         playerId: playerId,
                         isMe: playerId == widget.uid,
+                        teeNote: _teeNote(playerId, hole),
                         par: _parOf(hole),
                         max: _maxOf(hole),
                         noPickups: _maxMode == 'none',
@@ -372,6 +409,7 @@ class _PlayerEntry extends StatelessWidget {
     super.key,
     required this.playerId,
     required this.isMe,
+    required this.teeNote,
     required this.par,
     required this.max,
     required this.noPickups,
@@ -385,6 +423,7 @@ class _PlayerEntry extends StatelessWidget {
 
   final String playerId;
   final bool isMe;
+  final String? teeNote;
   final int par;
   final int max;
   final bool noPickups;
@@ -422,6 +461,7 @@ class _PlayerEntry extends StatelessWidget {
                 ),
               ],
             ),
+            if (teeNote != null) Text(teeNote!, style: theme.textTheme.bodySmall),
             const SizedBox(height: 8),
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
