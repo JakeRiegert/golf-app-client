@@ -14,16 +14,22 @@ import 'scoring_helpers.dart';
 // Only the organizer and co-admin see the controls; everyone else sees the same information read-only,
 // with their own group marked. The functions enforce all of it; the screen only hides what you cannot do.
 
-FirebaseFunctions get _functions => FirebaseFunctions.instanceFor(region: 'us-central1');
+FirebaseFunctions get _functions =>
+    FirebaseFunctions.instanceFor(region: 'us-central1');
 
 // Display names are read once per person and remembered, so a long group list does not re-read profiles.
 final Map<String, Future<String>> _names = {};
 
 Future<String> playerNameOf(String uid) => _names.putIfAbsent(uid, () async {
   try {
-    final snap = await FirebaseFirestore.instance.collection('players').doc(uid).get();
+    final snap = await FirebaseFirestore.instance
+        .collection('players')
+        .doc(uid)
+        .get();
     final name = (snap.data()?['displayName'] as String?)?.trim();
-    return (name == null || name.isEmpty) ? 'Player ${uid.substring(0, min(4, uid.length))}' : name;
+    return (name == null || name.isEmpty)
+        ? 'Player ${uid.substring(0, min(4, uid.length))}'
+        : name;
   } catch (_) {
     return 'Player ${uid.substring(0, min(4, uid.length))}';
   }
@@ -32,18 +38,31 @@ Future<String> playerNameOf(String uid) => _names.putIfAbsent(uid, () async {
 void _showDone(BuildContext context, String message) {
   ScaffoldMessenger.maybeOf(context)
     ?..hideCurrentSnackBar()
-    ..showSnackBar(SnackBar(content: Text(message), backgroundColor: Colors.green.shade700));
+    ..showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: Colors.green.shade700),
+    );
 }
 
-Future<bool> _confirm(BuildContext context, String title, String body, String action) async {
+Future<bool> _confirm(
+  BuildContext context,
+  String title,
+  String body,
+  String action,
+) async {
   final result = await showDialog<bool>(
     context: context,
     builder: (context) => AlertDialog(
       title: Text(title),
       content: Text(body),
       actions: [
-        TextButton(onPressed: () => popDialog(context, false), child: const Text('Cancel')),
-        FilledButton(onPressed: () => popDialog(context, true), child: Text(action)),
+        TextButton(
+          onPressed: () => popDialog(context, false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => popDialog(context, true),
+          child: Text(action),
+        ),
       ],
     ),
   );
@@ -53,12 +72,19 @@ Future<bool> _confirm(BuildContext context, String title, String body, String ac
 // Calls a function and shows the outcome where it is seen at once. A round dated outside the tournament's
 // dates is refused by the server until the admin agrees to widen them, so that one refusal becomes a
 // question and a retry. Returns whether the call went through.
-Future<bool> _call(BuildContext context, String name, Map<String, Object?> payload, {String? done}) async {
+Future<bool> _call(
+  BuildContext context,
+  String name,
+  Map<String, Object?> payload, {
+  String? done,
+}) async {
   try {
     try {
       await _functions.httpsCallable(name).call(payload);
     } on FirebaseFunctionsException catch (e) {
-      final needsAgreement = e.code == 'failed-precondition' && (e.message ?? '').contains('extendTournamentDates');
+      final needsAgreement =
+          e.code == 'failed-precondition' &&
+          (e.message ?? '').contains('extendTournamentDates');
       if (!needsAgreement || !context.mounted) rethrow;
       final agreed = await _confirm(
         context,
@@ -67,7 +93,10 @@ Future<bool> _call(BuildContext context, String name, Map<String, Object?> paylo
         'Widen and continue',
       );
       if (!agreed) return false;
-      await _functions.httpsCallable(name).call({...payload, 'extendTournamentDates': true});
+      await _functions.httpsCallable(name).call({
+        ...payload,
+        'extendTournamentDates': true,
+      });
     }
     if (context.mounted && done != null) _showDone(context, done);
     return true;
@@ -78,7 +107,12 @@ Future<bool> _call(BuildContext context, String name, Map<String, Object?> paylo
 }
 
 class RoundsSection extends StatefulWidget {
-  const RoundsSection({super.key, required this.tournamentId, required this.uid, required this.canEdit});
+  const RoundsSection({
+    super.key,
+    required this.tournamentId,
+    required this.uid,
+    required this.canEdit,
+  });
 
   final String tournamentId;
   final String uid;
@@ -91,11 +125,16 @@ class RoundsSection extends StatefulWidget {
 class _RoundsSectionState extends State<RoundsSection> {
   bool _busy = false;
 
-  CollectionReference<Map<String, dynamic>> get _rounds =>
-      FirebaseFirestore.instance.collection('tournaments').doc(widget.tournamentId).collection('rounds');
+  CollectionReference<Map<String, dynamic>> get _rounds => FirebaseFirestore
+      .instance
+      .collection('tournaments')
+      .doc(widget.tournamentId)
+      .collection('rounds');
 
   Future<void> _add() async {
-    final values = await showDialog<_RoundValues>(context: context, builder: (_) => const _RoundDialog());
+    final values = await Navigator.of(context).push<_RoundValues>(
+      MaterialPageRoute(builder: (_) => const _RoundDialog()),
+    );
     if (values == null || !mounted) return;
     setState(() => _busy = true);
     await _call(context, 'createRound', {
@@ -138,17 +177,28 @@ class _RoundsSectionState extends State<RoundsSection> {
           stream: _rounds.orderBy('number').snapshots(),
           builder: (context, snapshot) {
             if (snapshot.hasError) {
-              return Text('${snapshot.error}', style: TextStyle(color: theme.colorScheme.error));
+              return Text(
+                '${snapshot.error}',
+                style: TextStyle(color: theme.colorScheme.error),
+              );
             }
             // Play order: by date, then the order they were added. The label 'Round N' is the position in this
             // order, so a round added later for an earlier day slots in without renaming the others.
-            final docs = [...(snapshot.data?.docs ?? [])]..sort((a, b) {
-                final byDate = '${a.data()['date']}'.compareTo('${b.data()['date']}');
+            final docs = [...(snapshot.data?.docs ?? [])]
+              ..sort((a, b) {
+                final byDate = '${a.data()['date']}'.compareTo(
+                  '${b.data()['date']}',
+                );
                 if (byDate != 0) return byDate;
-                return ((a.data()['number'] as num?) ?? 0).compareTo((b.data()['number'] as num?) ?? 0);
+                return ((a.data()['number'] as num?) ?? 0).compareTo(
+                  (b.data()['number'] as num?) ?? 0,
+                );
               });
             if (docs.isEmpty) {
-              return const Padding(padding: EdgeInsets.symmetric(vertical: 16), child: Text('No rounds yet.'));
+              return const Padding(
+                padding: EdgeInsets.symmetric(vertical: 16),
+                child: Text('No rounds yet.'),
+              );
             }
             return Column(
               children: [
@@ -197,12 +247,16 @@ class _RoundCard extends StatefulWidget {
 class _RoundCardState extends State<_RoundCard> {
   bool _busy = false;
 
-  DocumentReference<Map<String, dynamic>> get _tournament =>
-      FirebaseFirestore.instance.collection('tournaments').doc(widget.tournamentId);
+  DocumentReference<Map<String, dynamic>> get _tournament => FirebaseFirestore
+      .instance
+      .collection('tournaments')
+      .doc(widget.tournamentId);
 
-  DocumentReference<Map<String, dynamic>> get _round => _tournament.collection('rounds').doc(widget.roundId);
+  DocumentReference<Map<String, dynamic>> get _round =>
+      _tournament.collection('rounds').doc(widget.roundId);
 
-  Map<String, dynamic> get _course => Map<String, dynamic>.from((widget.data['course'] as Map?) ?? {});
+  Map<String, dynamic> get _course =>
+      Map<String, dynamic>.from((widget.data['course'] as Map?) ?? {});
   bool get _hasCourse => widget.data['course'] != null;
   bool get _hasSampleCourse => _course['name'] == 'Sample Course';
   int get _maxGroupSize => (widget.data['maxGroupSize'] as num?)?.toInt() ?? 4;
@@ -219,9 +273,8 @@ class _RoundCardState extends State<_RoundCard> {
   }
 
   Future<void> _editSettings() async {
-    final values = await showDialog<_RoundValues>(
-      context: context,
-      builder: (_) => _RoundDialog(initial: widget.data),
+    final values = await Navigator.of(context).push<_RoundValues>(
+      MaterialPageRoute(builder: (_) => _RoundDialog(initial: widget.data)),
     );
     if (values == null || !mounted) return;
     await _run(() async {
@@ -253,9 +306,13 @@ class _RoundCardState extends State<_RoundCard> {
     }
     await _run(() async {
       final roster = await _tournament.collection('players').get();
-      final ids = [for (final doc in roster.docs) if (doc.data()['withdrawn'] != true) doc.id];
+      final ids = [
+        for (final doc in roster.docs)
+          if (doc.data()['withdrawn'] != true) doc.id,
+      ];
       if (ids.isEmpty) {
-        if (mounted) showErrorMessage(context, 'There is nobody on the roster yet.');
+        if (mounted)
+          showErrorMessage(context, 'There is nobody on the roster yet.');
         return;
       }
       if (randomize) ids.shuffle(Random());
@@ -264,13 +321,20 @@ class _RoundCardState extends State<_RoundCard> {
       await _call(context, 'setGroups', {
         'tournamentId': widget.tournamentId,
         'roundId': widget.roundId,
-        'groups': [for (final chunk in chunks) {'playerIds': chunk}],
+        'groups': [
+          for (final chunk in chunks) {'playerIds': chunk},
+        ],
       }, done: '${chunks.length} group${chunks.length == 1 ? '' : 's'} set.');
     });
   }
 
   Future<void> _clear() async {
-    final ok = await _confirm(context, 'Remove all groups?', 'Every group in this round is removed.', 'Remove');
+    final ok = await _confirm(
+      context,
+      'Remove all groups?',
+      'Every group in this round is removed.',
+      'Remove',
+    );
     if (!ok || !mounted) return;
     await _run(() async {
       await _call(context, 'setGroups', {
@@ -282,7 +346,9 @@ class _RoundCardState extends State<_RoundCard> {
   }
 
   // The group payload the server takes, rebuilt from what is stored.
-  Map<String, Object?> _groupPayload(QueryDocumentSnapshot<Map<String, dynamic>> doc) {
+  Map<String, Object?> _groupPayload(
+    QueryDocumentSnapshot<Map<String, dynamic>> doc,
+  ) {
     final data = doc.data();
     final teeTime = data['teeTime'];
     final sides = data['sides'];
@@ -290,14 +356,26 @@ class _RoundCardState extends State<_RoundCard> {
       'id': doc.id,
       'playerIds': List<String>.from(data['playerIds'] as List),
       'teeHole': (data['teeHole'] as num).toInt(),
-      'teeTime': teeTime is Timestamp ? teeTime.toDate().toUtc().toIso8601String() : null,
+      'teeTime': teeTime is Timestamp
+          ? teeTime.toDate().toUtc().toIso8601String()
+          : null,
       'sides': sides is List
-          ? [for (final side in sides) {'playerIds': List<String>.from((side as Map)['playerIds'] as List)}]
+          ? [
+              for (final side in sides)
+                {
+                  'playerIds': List<String>.from(
+                    (side as Map)['playerIds'] as List,
+                  ),
+                },
+            ]
           : null,
     };
   }
 
-  Future<void> _editGroup(List<QueryDocumentSnapshot<Map<String, dynamic>>> groups, int index) async {
+  Future<void> _editGroup(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> groups,
+    int index,
+  ) async {
     final doc = groups[index];
     final edit = await showDialog<_GroupEdit>(
       context: context,
@@ -305,15 +383,25 @@ class _RoundCardState extends State<_RoundCard> {
         roundDate: widget.data['date'] as String,
         firstHole: _firstHole,
         lastHole: _firstHole + _holesPlanned - 1,
-        skipped: List<int>.from(((widget.data['skippedHoles'] as List?) ?? []).map((h) => (h as num).toInt())),
+        skipped: List<int>.from(
+          ((widget.data['skippedHoles'] as List?) ?? []).map(
+            (h) => (h as num).toInt(),
+          ),
+        ),
         initialHole: (doc.data()['teeHole'] as num).toInt(),
-        initialTeeTime: (doc.data()['teeTime'] as Timestamp?)?.toDate().toLocal(),
+        initialTeeTime: (doc.data()['teeTime'] as Timestamp?)
+            ?.toDate()
+            .toLocal(),
       ),
     );
     if (edit == null || !mounted) return;
     await _run(() async {
       final payload = [for (final g in groups) _groupPayload(g)];
-      payload[index] = {...payload[index], 'teeHole': edit.teeHole, 'teeTime': edit.teeTimeIso};
+      payload[index] = {
+        ...payload[index],
+        'teeHole': edit.teeHole,
+        'teeTime': edit.teeTimeIso,
+      };
       await _call(context, 'setGroups', {
         'tournamentId': widget.tournamentId,
         'roundId': widget.roundId,
@@ -324,7 +412,9 @@ class _RoundCardState extends State<_RoundCard> {
 
   String _title() {
     final name = widget.data['name'];
-    return name is String && name.isNotEmpty ? name : 'Round ${widget.position}';
+    return name is String && name.isNotEmpty
+        ? name
+        : 'Round ${widget.position}';
   }
 
   Future<void> _delete() async {
@@ -336,7 +426,10 @@ class _RoundCardState extends State<_RoundCard> {
     );
     if (!ok || !mounted) return;
     await _run(() async {
-      await _call(context, 'deleteRound', {'tournamentId': widget.tournamentId, 'roundId': widget.roundId}, done: 'Round deleted.');
+      await _call(context, 'deleteRound', {
+        'tournamentId': widget.tournamentId,
+        'roundId': widget.roundId,
+      }, done: 'Round deleted.');
     });
   }
 
@@ -346,7 +439,9 @@ class _RoundCardState extends State<_RoundCard> {
     // Only the holes this round plays: the course may list 18 while the round is a front or back nine.
     final from = (_firstHole - 1).clamp(0, all.length);
     final to = (_firstHole - 1 + _holesPlanned).clamp(from, all.length);
-    final par = all.sublist(from, to).fold<int>(0, (total, h) => total + ((h as Map)['par'] as num).toInt());
+    final par = all
+        .sublist(from, to)
+        .fold<int>(0, (total, h) => total + ((h as Map)['par'] as num).toInt());
     return '${_course['name']} (par $par)';
   }
 
@@ -399,7 +494,10 @@ class _RoundCardState extends State<_RoundCard> {
               stream: _round.collection('groups').orderBy('order').snapshots(),
               builder: (context, snapshot) {
                 if (snapshot.hasError) {
-                  return Text('${snapshot.error}', style: TextStyle(color: theme.colorScheme.error));
+                  return Text(
+                    '${snapshot.error}',
+                    style: TextStyle(color: theme.colorScheme.error),
+                  );
                 }
                 final groups = snapshot.data?.docs ?? [];
                 return Column(
@@ -407,7 +505,12 @@ class _RoundCardState extends State<_RoundCard> {
                   children: [
                     Row(
                       children: [
-                        Expanded(child: Text('Groups (${groups.length})', style: theme.textTheme.titleSmall)),
+                        Expanded(
+                          child: Text(
+                            'Groups (${groups.length})',
+                            style: theme.textTheme.titleSmall,
+                          ),
+                        ),
                         if (widget.canEdit)
                           PopupMenuButton<String>(
                             enabled: !_busy,
@@ -416,17 +519,39 @@ class _RoundCardState extends State<_RoundCard> {
                               if (choice == 'clear') {
                                 _clear();
                               } else {
-                                _fill(randomize: choice == 'random', hasGroups: groups.isNotEmpty);
+                                _fill(
+                                  randomize: choice == 'random',
+                                  hasGroups: groups.isNotEmpty,
+                                );
                               }
                             },
                             itemBuilder: (_) => [
-                              const PopupMenuItem(value: 'order', child: Text('Fill from the roster, in order')),
-                              const PopupMenuItem(value: 'random', child: Text('Fill from the roster, shuffled')),
-                              if (groups.isNotEmpty) const PopupMenuItem(value: 'clear', child: Text('Remove all groups')),
+                              const PopupMenuItem(
+                                value: 'order',
+                                child: Text('Fill from the roster, in order'),
+                              ),
+                              const PopupMenuItem(
+                                value: 'random',
+                                child: Text('Fill from the roster, shuffled'),
+                              ),
+                              if (groups.isNotEmpty)
+                                const PopupMenuItem(
+                                  value: 'clear',
+                                  child: Text('Remove all groups'),
+                                ),
                             ],
                             child: const Padding(
-                              padding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                              child: Row(mainAxisSize: MainAxisSize.min, children: [Text('Set groups'), Icon(Icons.arrow_drop_down)]),
+                              padding: EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 8,
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text('Set groups'),
+                                  Icon(Icons.arrow_drop_down),
+                                ],
+                              ),
                             ),
                           ),
                       ],
@@ -435,7 +560,9 @@ class _RoundCardState extends State<_RoundCard> {
                       Padding(
                         padding: const EdgeInsets.symmetric(vertical: 8),
                         child: Text(
-                          widget.canEdit ? 'No groups yet. Use "Set groups" to fill them from the roster.' : 'No groups yet.',
+                          widget.canEdit
+                              ? 'No groups yet. Use "Set groups" to fill them from the roster.'
+                              : 'No groups yet.',
                           style: theme.textTheme.bodySmall,
                         ),
                       ),
@@ -444,7 +571,9 @@ class _RoundCardState extends State<_RoundCard> {
                         order: (groups[i].data()['order'] as num).toInt(),
                         data: groups[i].data(),
                         uid: widget.uid,
-                        onEdit: widget.canEdit && !_busy ? () => _editGroup(groups, i) : null,
+                        onEdit: widget.canEdit && !_busy
+                            ? () => _editGroup(groups, i)
+                            : null,
                       ),
                   ],
                 );
@@ -458,7 +587,12 @@ class _RoundCardState extends State<_RoundCard> {
 }
 
 class _GroupTile extends StatelessWidget {
-  const _GroupTile({required this.order, required this.data, required this.uid, required this.onEdit});
+  const _GroupTile({
+    required this.order,
+    required this.data,
+    required this.uid,
+    required this.onEdit,
+  });
 
   final int order;
   final Map<String, dynamic> data;
@@ -471,11 +605,15 @@ class _GroupTile extends StatelessWidget {
     final playerIds = List<String>.from(data['playerIds'] as List);
     final mine = playerIds.contains(uid);
     final teeTime = data['teeTime'];
-    final tee = teeTime is Timestamp ? TimeOfDay.fromDateTime(teeTime.toDate().toLocal()).format(context) : null;
+    final tee = teeTime is Timestamp
+        ? TimeOfDay.fromDateTime(teeTime.toDate().toLocal()).format(context)
+        : null;
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 4),
       decoration: BoxDecoration(
-        color: mine ? theme.colorScheme.primaryContainer : theme.colorScheme.surfaceContainerHighest,
+        color: mine
+            ? theme.colorScheme.primaryContainer
+            : theme.colorScheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(12),
       ),
       child: ListTile(
@@ -489,22 +627,37 @@ class _GroupTile extends StatelessWidget {
           children: [
             Text(
               [
-                tee == null ? 'No tee time' : 'Tee time $tee (this phone\'s time)',
+                tee == null
+                    ? 'No tee time'
+                    : 'Tee time $tee (this phone\'s time)',
                 'starts on hole ${data['teeHole']}',
               ].join(' · '),
             ),
             FutureBuilder<List<String>>(
-              future: Future.wait([for (final id in playerIds) playerNameOf(id)]),
+              future: Future.wait([
+                for (final id in playerIds) playerNameOf(id),
+              ]),
               builder: (context, snapshot) {
                 final names = snapshot.data;
                 if (names == null) return const Text('...');
-                return Text([for (var i = 0; i < names.length; i++) playerIds[i] == uid ? '${names[i]} (you)' : names[i]].join(', '));
+                return Text(
+                  [
+                    for (var i = 0; i < names.length; i++)
+                      playerIds[i] == uid ? '${names[i]} (you)' : names[i],
+                  ].join(', '),
+                );
               },
             ),
           ],
         ),
         isThreeLine: true,
-        trailing: onEdit == null ? null : IconButton(tooltip: 'Edit tee time and start hole', icon: const Icon(Icons.edit_outlined), onPressed: onEdit),
+        trailing: onEdit == null
+            ? null
+            : IconButton(
+                tooltip: 'Edit tee time and start hole',
+                icon: const Icon(Icons.edit_outlined),
+                onPressed: onEdit,
+              ),
       ),
     );
   }
@@ -553,23 +706,33 @@ class _RoundDialog extends StatefulWidget {
 }
 
 class _RoundDialogState extends State<_RoundDialog> {
-  late final _name = TextEditingController(text: (widget.initial?['name'] as String?) ?? '');
-  late final _date = TextEditingController(text: (widget.initial?['date'] as String?) ?? '');
+  late final _name = TextEditingController(
+    text: (widget.initial?['name'] as String?) ?? '',
+  );
+  late final _date = TextEditingController(
+    text: (widget.initial?['date'] as String?) ?? '',
+  );
   late String _holes = HolesChoice.keyOf(
     (widget.initial?['holesPlanned'] as num?)?.toInt() ?? 18,
     (widget.initial?['firstHole'] as num?)?.toInt() ?? 1,
   );
   late int _size = (widget.initial?['maxGroupSize'] as num?)?.toInt() ?? 4;
-  late bool _sample = widget.initial == null || ((widget.initial?['course'] as Map?)?['name'] == 'Sample Course');
-  late final _courseName = TextEditingController(text: _courseIsOther ? '${(widget.initial?['course'] as Map)['name']}' : '');
+  late bool _sample =
+      widget.initial == null ||
+      ((widget.initial?['course'] as Map?)?['name'] == 'Sample Course');
+  late final _courseName = TextEditingController(
+    text: _courseIsOther ? '${(widget.initial?['course'] as Map)['name']}' : '',
+  );
   late final _pars = TextEditingController(text: _initialPars);
   String? _error;
 
   // The pars of a hand-entered course being edited, as the text the box takes ("4 4 3 5 ...").
   String get _initialPars {
     if (!_courseIsOther) return '';
-    final holes = (widget.initial?['course'] as Map)['holes'] as List? ?? const [];
-    return [for (final h in holes) ((h as Map)['par'] as num).toInt()].join(' ');
+    final holes =
+        (widget.initial?['course'] as Map)['holes'] as List? ?? const [];
+    return [for (final h in holes) ((h as Map)['par'] as num).toInt()]
+        .join(' ');
   }
 
   // A hand-entered course is not touched from here, so the switch is hidden for one.
@@ -583,7 +746,8 @@ class _RoundDialogState extends State<_RoundDialog> {
     super.initState();
     // The message about a missing date goes away as soon as a date is picked.
     _date.addListener(() {
-      if (_error != null && DateField.parse(_date.text) != null) setState(() => _error = null);
+      if (_error != null && DateField.parse(_date.text) != null)
+        setState(() => _error = null);
     });
   }
 
@@ -610,9 +774,11 @@ class _RoundDialogState extends State<_RoundDialog> {
         return;
       }
       // Only sent when it is new or changed: an unchanged course is left alone, since a course is frozen once a score exists.
-      final changed = !_courseIsOther ||
+      final changed =
+          !_courseIsOther ||
           parsed.pars!.join(' ') != _initialPars ||
-          _courseName.text.trim() != '${(widget.initial?['course'] as Map)['name']}';
+          _courseName.text.trim() !=
+              '${(widget.initial?['course'] as Map)['name']}';
       if (changed) course = courseFromPars(_courseName.text, parsed.pars!);
     }
     popDialog(
@@ -630,76 +796,124 @@ class _RoundDialogState extends State<_RoundDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(widget.initial == null ? 'Add a round' : 'Round settings'),
-      content: SizedBox(
-        width: 360,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              TextField(
-                controller: _name,
-                maxLength: 40,
-                decoration: const InputDecoration(labelText: 'Name (optional)', hintText: 'Practice, Friday AM...'),
-              ),
-              DateField(controller: _date, label: 'Date'),
-              const SizedBox(height: 16),
-              const Text('Holes'),
-              const SizedBox(height: 8),
-              SegmentedButton<String>(
-                segments: const [
-                  ButtonSegment(value: '18', label: Text('18')),
-                  ButtonSegment(value: 'front', label: Text('Front 9')),
-                  ButtonSegment(value: 'back', label: Text('Back 9')),
-                ],
-                selected: {_holes},
-                onSelectionChanged: (s) => setState(() => _holes = s.first),
-              ),
-              const SizedBox(height: 16),
-              DropdownButtonFormField<int>(
-                initialValue: _size,
-                decoration: const InputDecoration(labelText: 'Largest group'),
-                items: [for (var n = 1; n <= 8; n++) DropdownMenuItem(value: n, child: Text(n == 1 ? '1 player' : '$n players'))],
-                onChanged: (n) => setState(() => _size = n ?? 4),
-              ),
-              if (!_courseIsOther)
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Use the sample course'),
-                  subtitle: const Text('A made-up par-72 course, for testing'),
-                  value: _sample,
-                  onChanged: (v) => setState(() => _sample = v),
+    final saveLabel = widget.initial == null ? 'Add round' : 'Save';
+    // A full page, not a dialog: on a phone the keyboard left a dialog almost no room, and the course
+    // fields at its bottom could not be reached. The Save action also sits in the app bar so it is
+    // always on screen, even with the keyboard open.
+    return Scaffold(
+      appBar: AppBar(
+        leading: IconButton(
+          tooltip: 'Cancel',
+          icon: const Icon(Icons.close),
+          onPressed: () => popDialog(context),
+        ),
+        title: Text(widget.initial == null ? 'Add a round' : 'Round settings'),
+        actions: [TextButton(onPressed: _save, child: Text(saveLabel))],
+      ),
+      body: Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (_error != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Text(
+                      _error!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ),
+                TextField(
+                  controller: _name,
+                  maxLength: 40,
+                  decoration: const InputDecoration(
+                    labelText: 'Name (optional)',
+                    hintText: 'Practice, Friday AM...',
+                  ),
                 ),
-              const SizedBox(height: 8),
-              Text('Or enter your course', style: Theme.of(context).textTheme.titleSmall),
-              TextField(
-                controller: _courseName,
-                maxLength: 60,
-                decoration: const InputDecoration(labelText: 'Course name'),
-              ),
-              TextField(
-                controller: _pars,
-                keyboardType: TextInputType.multiline,
-                minLines: 2,
-                maxLines: 3,
-                decoration: const InputDecoration(
-                  labelText: 'Pars, hole 1 to 18',
-                  hintText: '4 4 3 5 4 4 3 5 4 4 4 3 5 4 4 3 5 4',
-                  helperText: 'Leave empty to keep the choice above. Sets the right maximum score on each hole.',
-                  helperMaxLines: 2,
+                DateField(controller: _date, label: 'Date'),
+                const SizedBox(height: 16),
+                const Text('Holes'),
+                const SizedBox(height: 8),
+                SegmentedButton<String>(
+                  segments: const [
+                    ButtonSegment(value: '18', label: Text('18')),
+                    ButtonSegment(value: 'front', label: Text('Front 9')),
+                    ButtonSegment(value: 'back', label: Text('Back 9')),
+                  ],
+                  selected: {_holes},
+                  onSelectionChanged: (s) => setState(() => _holes = s.first),
                 ),
-              ),
-              if (_error != null) Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
-            ],
+                const SizedBox(height: 16),
+                DropdownButtonFormField<int>(
+                  initialValue: _size,
+                  decoration: const InputDecoration(labelText: 'Largest group'),
+                  items: [
+                    for (var n = 1; n <= 8; n++)
+                      DropdownMenuItem(
+                        value: n,
+                        child: Text(n == 1 ? '1 player' : '$n players'),
+                      ),
+                  ],
+                  onChanged: (n) => setState(() => _size = n ?? 4),
+                ),
+                if (!_courseIsOther)
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Use the sample course'),
+                    subtitle: const Text(
+                      'A made-up par-72 course, for testing',
+                    ),
+                    value: _sample,
+                    onChanged: (v) => setState(() => _sample = v),
+                  ),
+                const SizedBox(height: 24),
+                Text(
+                  'Or enter your course',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                TextField(
+                  controller: _courseName,
+                  maxLength: 60,
+                  decoration: const InputDecoration(labelText: 'Course name'),
+                ),
+                TextField(
+                  controller: _pars,
+                  keyboardType: TextInputType.multiline,
+                  minLines: 2,
+                  maxLines: 3,
+                  decoration: const InputDecoration(
+                    labelText: 'Pars, hole 1 to 18',
+                    hintText: '4 4 3 5 4 4 3 5 4 4 4 3 5 4 4 3 5 4',
+                    helperText: 'Leave empty to keep the choice above. Sets the right maximum score on each hole.',
+                    helperMaxLines: 2,
+                  ),
+                ),
+                if (_error != null)
+                  Text(
+                    _error!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                const SizedBox(height: 16),
+                FilledButton(onPressed: _save, child: Text(saveLabel)),
+                // Room to scroll the last field above the keyboard.
+                SizedBox(
+                  height: MediaQuery.of(context).viewInsets.bottom > 0 ? 24 : 0,
+                ),
+              ],
+            ),
           ),
         ),
       ),
-      actions: [
-        TextButton(onPressed: () => popDialog(context), child: const Text('Cancel')),
-        FilledButton(onPressed: _save, child: Text(widget.initial == null ? 'Add round' : 'Save')),
-      ],
     );
   }
 }
@@ -734,17 +948,25 @@ class _GroupDialog extends StatefulWidget {
 }
 
 class _GroupDialogState extends State<_GroupDialog> {
-  late TimeOfDay? _time = widget.initialTeeTime == null ? null : TimeOfDay.fromDateTime(widget.initialTeeTime!);
+  late TimeOfDay? _time = widget.initialTeeTime == null
+      ? null
+      : TimeOfDay.fromDateTime(widget.initialTeeTime!);
   late int _hole = widget.initialHole;
 
   Future<void> _pickTime() async {
-    final picked = await showTimePicker(context: context, initialTime: _time ?? const TimeOfDay(hour: 8, minute: 0));
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: _time ?? const TimeOfDay(hour: 8, minute: 0),
+    );
     if (picked != null) setState(() => _time = picked);
   }
 
   @override
   Widget build(BuildContext context) {
-    final holes = [for (var h = widget.firstHole; h <= widget.lastHole; h++) if (!widget.skipped.contains(h)) h];
+    final holes = [
+      for (var h = widget.firstHole; h <= widget.lastHole; h++)
+        if (!widget.skipped.contains(h)) h,
+    ];
     return AlertDialog(
       title: const Text('Tee time and start hole'),
       content: SizedBox(
@@ -760,9 +982,15 @@ class _GroupDialogState extends State<_GroupDialog> {
                 OutlinedButton.icon(
                   onPressed: _pickTime,
                   icon: const Icon(Icons.schedule),
-                  label: Text(_time == null ? 'Set a tee time' : _time!.format(context)),
+                  label: Text(
+                    _time == null ? 'Set a tee time' : _time!.format(context),
+                  ),
                 ),
-                if (_time != null) TextButton(onPressed: () => setState(() => _time = null), child: const Text('No tee time')),
+                if (_time != null)
+                  TextButton(
+                    onPressed: () => setState(() => _time = null),
+                    child: const Text('No tee time'),
+                  ),
               ],
             ),
             const SizedBox(height: 4),
@@ -774,7 +1002,10 @@ class _GroupDialogState extends State<_GroupDialog> {
             DropdownButtonFormField<int>(
               initialValue: holes.contains(_hole) ? _hole : holes.first,
               decoration: const InputDecoration(labelText: 'Starts on hole'),
-              items: [for (final h in holes) DropdownMenuItem(value: h, child: Text('Hole $h'))],
+              items: [
+                for (final h in holes)
+                  DropdownMenuItem(value: h, child: Text('Hole $h')),
+              ],
               onChanged: (h) => setState(() => _hole = h ?? widget.firstHole),
             ),
             const SizedBox(height: 4),
@@ -786,11 +1017,19 @@ class _GroupDialogState extends State<_GroupDialog> {
         ),
       ),
       actions: [
-        TextButton(onPressed: () => popDialog(context), child: const Text('Cancel')),
+        TextButton(
+          onPressed: () => popDialog(context),
+          child: const Text('Cancel'),
+        ),
         FilledButton(
           onPressed: () => popDialog(
             context,
-            _GroupEdit(_time == null ? null : teeTimeToIso(widget.roundDate, _time!.hour, _time!.minute), _hole),
+            _GroupEdit(
+              _time == null
+                  ? null
+                  : teeTimeToIso(widget.roundDate, _time!.hour, _time!.minute),
+              _hole,
+            ),
           ),
           child: const Text('Save'),
         ),
